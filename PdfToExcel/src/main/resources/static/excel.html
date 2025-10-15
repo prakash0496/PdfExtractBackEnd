@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bank Statement PDF to Excel</title>
+</head>
+<body>
+<h2>Upload Scanned PDF and Download Excel</h2>
+<form id="uploadForm" enctype="multipart/form-data">
+    <input type="file" name="file" accept="application/pdf" required>
+    <button type="submit">Download Excel</button>
+</form>
+
+<script>
+    document.getElementById("uploadForm").addEventListener("submit", async function(event) {
+        event.preventDefault();
+
+        const formData = new FormData(this);
+
+        try {
+            const response = await fetch("http://localhost:8080/api/pdf/download-excel", {
+                method: "POST",
+                body: formData
+            });
+
+            if (!response.ok) {
+                alert("Failed to download Excel!");
+                return;
+            }
+
+            // Get response as blob
+            const blob = await response.blob();
+
+            // Create temporary link to download
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = "BankStatement.xlsx"; // file name
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(link.href);
+
+        } catch (error) {
+            console.error("Error:", error);
+            alert("Error downloading Excel!");
+        }
+    });
+</script>
+</body>
+</html>

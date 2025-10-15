@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bank Statement OCR Extract</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; }
+        th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+
+<h2>Upload Bank Statement PDF</h2>
+<input type="file" id="pdfFile" />
+<select id="bankSelect">
+    <option value="KVB">KVB</option>
+    <option value="CANARA">Canara Bank</option>
+    <option value="FEDERAL">Federal Bank</option>
+    <option value="ICICI">ICICI</option>
+    <option value="INDUSLND">INDUSLND</option>
+    <option value="SBI">State Bank</option>
+    <option value="CITY_UNION">City Union</option>
+</select>
+<input type="text" id="password"/>
+<button onclick="uploadPdf()">Extract Transactions</button>
+<button onclick="downloadExcel()">Download Excel</button>
+<button onclick="downloadXml()">Download XML</button>
+
+
+<h3>Extracted Transactions</h3>
+<table id="resultTable">
+    <thead>
+    <tr>
+        <th>Transaction Date</th>
+        <th>Value Date</th>
+        <th>Branch</th>
+        <th>Cheque No</th>
+        <th>Description</th>
+        <th>Debit</th>
+        <th>Credit</th>
+        <th>Balance</th>
+    </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+
+<script>
+    async function uploadPdf() {
+  const fileInput = document.getElementById("pdfFile");
+  const bankSelect = document.getElementById("bankSelect");
+  const password = document.getElementById("password");
+
+  if (!fileInput.files.length) {
+    alert("Please select a PDF file");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);
+  formData.append("bank", bankSelect.value); // ✅ send bank name
+  formData.append("password",password.value);
+
+  try {
+    const response = await fetch("http://localhost:8080/api/pdf/extract", {
+      method: "POST",
+      body: formData
+    });
+
+    const data = await response.json();
+
+    // Clear table
+    const tbody = document.querySelector("#resultTable tbody");
+    tbody.innerHTML = "";
+
+    // Populate table
+    data.forEach(tx => {
+      const row = `
+        <tr>
+          <td>${tx.transactionDate || ""}</td>
+          <td>${tx.valueDate || ""}</td>
+          <td>${tx.branchCode || ""}</td>
+          <td>${tx.chequeNo || ""}</td>
+          <td>${tx.description || ""}</td>
+          <td>${tx.debit || ""}</td>
+          <td>${tx.credit || ""}</td>
+          <td>${tx.balance || ""}</td>
+        </tr>
+      `;
+      tbody.innerHTML += row;
+    });
+
+  } catch (err) {
+    console.error("Error extracting transactions:", err);
+    alert("Failed to extract transactions.");
+  }
+}
+    async function downloadXml() {
+        const fileInput = document.getElementById("pdfFile");
+        const bankSelect = document.getElementById("bankSelect");
+
+        if (!fileInput.files.length) {
+            alert("Please select a PDF file to download XML.");
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("file", fileInput.files[0]);
+        formData.append("bank", bankSelect.value);
+
+        try {
+            const response = await fetch("http://localhost:8080/api/pdf/extract/tallyxml", {
+                method: "POST",
+                body: formData
+            });
+
+            if (!response.ok) throw new Error("Failed to download XML");
+
+            const blob = await response.blob();
+            const link = document.createElement("a");
+            link.href = window.URL.createObjectURL(blob);
+            link.download = `${bankSelect.value}_Transactions.xml`;
+            link.click();
+        } catch (err) {
+            console.error("Error downloading XML:", err);
+            alert("Failed to download XML file.");
+        }
+    }
+
+</script>
+</body>
+</html>

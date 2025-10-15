@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>Bank Statement</title>
+    <link rel="stylesheet" th:href="@{/css/styles.css}">
+</head>
+<body>
+
+<h2>Bank Statement</h2>
+
+<div style="text-align:center; margin-bottom: 10px;">
+    <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Search transactions...">
+</div>
+
+<table id="transactionTable">
+    <thead>
+    <tr>
+        <th>Date</th>
+        <th>Description</th>
+        <th>Amount</th>
+        <th>Balance</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr th:each="txn : ${transactions}">
+        <td th:text="${txn.date}"></td>
+        <td th:text="${txn.description}"></td>
+        <td th:text="${txn.amount}"></td>
+        <td th:text="${txn.balance}"></td>
+    </tr>
+    </tbody>
+</table>
+
+<script th:src="@{/js/script.js}"></script>
+</body>
+</html>
