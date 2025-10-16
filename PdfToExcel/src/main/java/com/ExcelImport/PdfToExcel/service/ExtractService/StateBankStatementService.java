@@ -11,7 +11,10 @@ import technology.tabula.Table;
 import technology.tabula.extractors.SpreadsheetExtractionAlgorithm;
 
 import java.io.ByteArrayInputStream;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 
 @Service
@@ -58,65 +61,62 @@ public class StateBankStatementService {
         return tableData;
     }
 
-    public List<StateBankTransactionDTO> mapTableToDto(List<List<String>> tableRows){
-        List<StateBankTransactionDTO> transactionDTOS = new ArrayList<>();
+    public List<StateBankTransactionDTO> mapTableToDto(List<List<String>> tableRows) {
+        List<StateBankTransactionDTO> transactions = new ArrayList<>();
 
-        for (List<String> row : tableRows){
+        for (List<String> row : tableRows) {
+            if (row == null || row.isEmpty()) continue;
 
-            // Skip if row is empty or has too few columns
-            if (isRowEmpty(row) || row.size() < 5 || row.get(0).toLowerCase().contains("post")) {
-                continue;
-            }
-
-            // Clean up each cell in the row
+            // ✅ Clean up each cell properly
             for (int i = 0; i < row.size(); i++) {
-                row.set(i, row.get(i).replaceAll("[\\r\\n]", "").trim());
+                String cell = row.get(i);
+                row.set(i, (cell == null ? "" : cell.replaceAll("[\\r\\n]", "").trim()));
             }
 
-            // Skip if after cleaning, the row is empty
-            if (isRowEmpty(row)) {
-                continue;
-            }
+            // ✅ Skip header or invalid rows
+            if (row.get(0).toLowerCase().contains("txn") || row.get(0).toLowerCase().contains("date")) continue;
 
-            StateBankTransactionDTO tx = new StateBankTransactionDTO();
+            StateBankTransactionDTO dto = new StateBankTransactionDTO();
 
-            tx.setTransactionDate(row.get(0));
-            tx.setValueDate(row.size() > 1 ? row.get(1) : "-" );
-            tx.setDescription(row.size() > 2 && !row.get(2).isEmpty() ? row.get(2) : "-");
-            tx.setChequeNo(row.size() > 3 && !row.get(3).isEmpty() ? row.get(3) : "-");
-            tx.setDebit(row.size() > 4 && !row.get(4).isEmpty() ? cleanAmount(row.get(4)) : "-");
-            tx.setCredit(row.size() > 5 && !row.get(5).isEmpty() ? cleanAmount(row.get(5)) : "-");
-            tx.setBalance(row.size() > 6 && !row.get(6).isEmpty() ? cleanAmount(row.get(6)) : "-");
+            // ✅ Detect if Branch Code column exists
+            // Format A: TxnDate, ValueDate, Description, RefNo/ChequeNo, BranchCode, Debit, Credit, Balance
+            // Format B: TxnDate, ValueDate, Description, RefNo/ChequeNo, Debit, Credit, Balance
+            boolean hasBranchCode = row.size() >= 8;
 
-            // 🧾 Voucher Type Logic
-            if (tx.getCredit() != null && !tx.getCredit().equals("-") && !tx.getCredit().isEmpty()) {
-                tx.setVoucherName("Receipt");
-            } else if (tx.getDebit() != null && !tx.getDebit().equals("-") && !tx.getDebit().isEmpty()) {
-                tx.setVoucherName("Payment");
+            dto.setTransactionDate(formatTallyDate(getValue(row, 0)));  // 🟩 formatted for Tally
+            dto.setValueDate(formatTallyDate(getValue(row, 1)));
+            dto.setDescription(getValue(row, 2));
+            dto.setChequeNo(getValue(row, 3));
+
+            if (hasBranchCode) {
+                dto.setBranchCode(getValue(row, 4));
+                dto.setDebit(cleanAmount(getValue(row, 5)));
+                dto.setCredit(cleanAmount(getValue(row, 6)));
+                dto.setBalance(cleanAmount(getValue(row, 7)));
             } else {
-                tx.setVoucherName("-");
+                dto.setBranchCode("-");
+                dto.setDebit(cleanAmount(getValue(row, 4)));
+                dto.setCredit(cleanAmount(getValue(row, 5)));
+                dto.setBalance(cleanAmount(getValue(row, 6)));
             }
 
-            transactionDTOS.add(tx);
+            // ✅ Voucher logic
+            if (!dto.getCredit().equals("-")) dto.setVoucherName("Receipt");
+            else if (!dto.getDebit().equals("-")) dto.setVoucherName("Payment");
+            else dto.setVoucherName("-");
+
+            transactions.add(dto);
         }
 
-        return transactionDTOS;
+        return transactions;
     }
 
-    /**
-     * Check if a row is completely empty
-     */
-    private boolean isRowEmpty(List<String> row) {
-        if (row == null || row.isEmpty()) {
-            return true;
-        }
+// 🔹 Helper Methods
 
-        for (String cell : row) {
-            if (cell != null && !cell.trim().isEmpty()) {
-                return false; // Found at least one non-empty cell
-            }
-        }
-        return true; // All cells are empty
+    private String getValue(List<String> row, int index) {
+        return (index < row.size() && row.get(index) != null && !row.get(index).trim().isEmpty())
+                ? row.get(index).trim()
+                : "-";
     }
 
     private String cleanAmount(String value) {
@@ -124,10 +124,23 @@ public class StateBankStatementService {
         return value.replace(",", "").replaceAll("[^0-9.]", "").trim();
     }
 
-    // Ensure default values for missing amounts
-    private void applyDefaultValues(CanaraBankTransactionDTO tx) {
-        if (tx.getDebit() == null || tx.getDebit().isEmpty()) tx.setDebit("-");
-        if (tx.getCredit() == null || tx.getCredit().isEmpty()) tx.setCredit("-");
-        if (tx.getBalance() == null || tx.getBalance().isEmpty()) tx.setBalance("-");
+    private String formatTallyDate(String dateStr) {
+        try {
+            if (dateStr == null || dateStr.trim().isEmpty() || dateStr.equalsIgnoreCase("-")) {
+                return "-";
+            }
+
+            // Normalize separators (handles both "/" and "-")
+            dateStr = dateStr.trim().replace("-", "/");
+
+            SimpleDateFormat inputDate = new SimpleDateFormat("dd/MM/yyyy");
+            SimpleDateFormat tallyDate = new SimpleDateFormat("yyyy-MM-dd");
+
+            Date parsedDate = inputDate.parse(dateStr);
+            return tallyDate.format(parsedDate);  // ✅ e.g., "20240401"
+        } catch (ParseException e) {
+            return "-";  // Graceful fallback
+        }
+
     }
 }

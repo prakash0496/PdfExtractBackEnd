@@ -45,11 +45,8 @@ public class TallyConversionService {
 
             amount = amount.replaceAll(",", "").trim();
             String formattedDate;
-            try {
-                formattedDate = tallyDate.format(new SimpleDateFormat("dd-MM-yyyy HH:mm:ss").parse(date));
-            } catch (ParseException e) {
-                formattedDate = tallyDate.format(new SimpleDateFormat("dd-MM-yyyy").parse(date));
-            }
+
+            formattedDate = simpleTallyDate(date);
 
 
             String voucherNumber = String.valueOf(counter);
@@ -96,6 +93,14 @@ public class TallyConversionService {
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;")
                 .replace("'", "&apos;");
+    }
+
+    private String simpleTallyDate(String dateStr) {
+        if (dateStr == null || dateStr.trim().isEmpty()) {
+            return "-";
+        }
+        // Remove all non-digit characters
+        return dateStr.replaceAll("\\D", "");
     }
 
 }
