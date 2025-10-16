@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: springboot-backend
+    buildCommand: ./mvnw clean package -DskipTests
+    startCommand: java -jar PdfToExcel-0.0.1-SNAPSHOT.jar
+    plan: free
+    envVars:
+      - key: SERVER_PORT
+        value: 8080
+    runtime: static
+
+  - type: web
+    name: angular-frontend
+    buildCommand: npm install && npm run build --prefix frontend
+    staticPublishPath: frontend/dist/PdfExtract
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
