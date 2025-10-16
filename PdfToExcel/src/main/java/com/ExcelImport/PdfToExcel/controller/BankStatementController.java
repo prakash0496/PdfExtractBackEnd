@@ -9,7 +9,8 @@ import com.ExcelImport.PdfToExcel.service.ExtractService.*;
 import com.ExcelImport.PdfToExcel.service.TallyService.TallyConversionService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.poi.sl.usermodel.SlideShow;
+import lombok.extern.log4j.Log4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
@@ -17,10 +18,10 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @CrossOrigin("*")
 @RestController
+@Log4j2
 @RequestMapping("/api/pdf")
 public class BankStatementController {
 
@@ -62,50 +63,51 @@ public class BankStatementController {
         switch (bank.toUpperCase()) {
             case "KVB": // OCR-based extraction
                 String ocrText = kvbBankStatementService.extractTextFromScannedPdf(file.getBytes());
-                System.out.println("🔎 OCR Extracted Text (KVB):\n" + ocrText);
+                log.info("🔎 OCR Extracted Text (KVB):\n" + ocrText);
                 transactions = kvbBankStatementService.extractTransactions(ocrText);
                 break;
 
             case "CANARA": // Tabula table extraction
                 List<List<String>> tableRows = canaraBankStatementService.extractTableFromPdf(file.getBytes());
-                System.out.println("🔎 Table Rows Extracted (Canara):\n" + tableRows);
+                log.info("🔎 Table Rows Extracted (Canara):\n" + tableRows);
                 transactions = canaraBankStatementService.mapTableToDto(tableRows);
                 break;
 
             case "FEDERAL":
                 List<List<String>> federalTableRows = federalBankStatementService.extractTableFromPdf(file.getBytes());
+                log.info("🔎 Table Rows Extracted (Federal):\n" +federalTableRows);
                 transactions = federalBankStatementService.mapFederalTableToDto(federalTableRows);
                 break;
 
             case "ICICI":
                 // FIXED: Extract text first, then parse transactions
                 String pdfText = iciciBankStatementService.extractTextFromPdf(file.getBytes());
-                System.out.println("🔎 Extracted Text (ICICI):\n" + pdfText);
+                log.info("🔎 Extracted Text (ICICI):\n" + pdfText);
                 transactions = iciciBankStatementService.extractTransaction(pdfText);
                 break;
 
             case "HDFC":
                 // FIXED: Extract text first, then parse transactions
                 String hdfcpdfText = hdfcBankStatementService.extractTextFromPdf(file.getBytes(),password);
-                System.out.println("🔎 Extracted Text (Hdfc):\n" + hdfcpdfText);
+                log.info("🔎 Extracted Text (Hdfc):\n" + hdfcpdfText);
                 transactions = hdfcBankStatementService.extractHdfcTransaction(hdfcpdfText);
                 break;
 
             case "INDUSLND":
                 transactions = induslndBankStatementService.extractTransactions(file.getBytes());
-                System.out.println("🔎 Table Rows Extracted (Induslnd):\n" + transactions);
+                log.info("🔎 Table Rows Extracted (Induslnd):\n" + transactions);
 //                transactions = induslndBankStatementService.(tableindusRows);
                 break;
 
             case "SBI": // Tabula table extraction
                 List<List<String>> sbitableRows = stateBankStatementService.extractTableFromPdf(file.getBytes());
-                System.out.println("🔎 Table Rows Extracted (SBI):\n" + sbitableRows);
+                log.info("🔎 Table Rows Extracted (SBI):\n" + sbitableRows);
                 transactions = stateBankStatementService.mapTableToDto(sbitableRows);
                 break;
 
             case "CITY_UNION": // Tabula table extraction
                 List<List<String>> citytableRows = cityUnionBankStatementService.extractTableFromPdf(file.getBytes());
-                System.out.println("🔎 Table Rows Extracted (SBI):\n" + citytableRows);
+                log.info("🔎 Table Rows Extracted (CITY_UNION_BANK):\n" + citytableRows);
                 transactions = cityUnionBankStatementService.mapTableToDto(citytableRows);
                 break;
 
@@ -113,7 +115,7 @@ public class BankStatementController {
                 throw new IllegalArgumentException("Unsupported bank: " + bank);
         }
 
-        System.out.println("✅ Extracted " + transactions.size() + " transactions for " + bank);
+        log.info("✅ Extracted " + transactions.size() + " transactions for " + bank);
         return transactions;
     }
 
@@ -305,7 +307,7 @@ public class BankStatementController {
     public ResponseEntity<byte[]> extractTallyXml(
             @RequestParam("bank") String bank,
             @RequestParam("tableData") String tableDataJson,
-            @RequestParam(value = "typeBank",required = false) String typeBank) {
+            @RequestParam(value ="bankName",required = false) String typeBank) {
 
         try {
             ObjectMapper mapper = new ObjectMapper();

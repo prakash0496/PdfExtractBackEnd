@@ -37,7 +37,7 @@ public class TallyConversionService {
             String debit = (String) tx.get("debit");
             String credit = (String) tx.get("credit");
             String voucherName = (String) tx.get("voucherName");
-            String ledgerName = typeBank;
+
 
             boolean isCredit = credit != null && !credit.equals("-") && !credit.isEmpty();
             String amount = isCredit ? credit : debit;
@@ -56,7 +56,7 @@ public class TallyConversionService {
             String guid = "GUID-" + voucherNumber;
 
                 xml.append("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\">\n")
-                    .append("<VOUCHER VCHTYPE=\"").append(isCredit ? "Receipt" : "Payment")
+                    .append("<VOUCHER VCHTYPE=\"").append(voucherName)
                     .append("\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\">\n")
                     .append("<GUID>").append(guid).append("</GUID>\n")
                     .append("<DATE>").append(formattedDate).append("</DATE>\n")
@@ -75,7 +75,7 @@ public class TallyConversionService {
 
                     // Bank Ledger
                     .append("<ALLLEDGERENTRIES.LIST>\n")
-                    .append("<LEDGERNAME>").append(bankName).append("</LEDGERNAME>\n")
+                    .append("<LEDGERNAME>").append(typeBank.toUpperCase()).append("</LEDGERNAME>\n")
                     .append("<ISDEEMEDPOSITIVE>").append(isCredit ? "Yes" : "No").append("</ISDEEMEDPOSITIVE>\n")
                     .append("<AMOUNT>").append(isCredit ? "-" + amount : amount).append("</AMOUNT>\n")
                     .append("</ALLLEDGERENTRIES.LIST>\n")
