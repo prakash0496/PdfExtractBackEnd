@@ -171,9 +171,9 @@ public class ICICIBankStatementService {
     }
 
 
-    public String extractTextFromPdf(byte[] pdfBytes) throws Exception {
-        try (PDDocument document = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
-            PDFTextStripper pdfStripper = new PDFTextStripper();
+public String extractTextFromPdf(byte[] pdfBytes) throws Exception {
+            try (PDDocument document = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+           PDFTextStripper pdfStripper = new PDFTextStripper();
             pdfStripper.setSortByPosition(true); // Important for table data
             return pdfStripper.getText(document);
         }

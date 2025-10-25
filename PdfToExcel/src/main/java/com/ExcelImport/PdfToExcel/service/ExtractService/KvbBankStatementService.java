@@ -29,7 +29,7 @@ public class KvbBankStatementService {
             StringBuilder fullText = new StringBuilder();
 
             for (int page = 0; page < document.getNumberOfPages(); ++page) {
-                BufferedImage image = pdfRenderer.renderImageWithDPI(page, 300);
+                BufferedImage image = pdfRenderer.renderImageWithDPI(page, 500);
                 String extractedText = tesseract.doOCR(image);
                 fullText.append(extractedText).append("\n");
             }

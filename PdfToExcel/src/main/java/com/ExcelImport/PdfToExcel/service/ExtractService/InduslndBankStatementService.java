@@ -17,7 +17,8 @@ public class InduslndBankStatementService {
     private static final Pattern AMOUNT_PATTERN = Pattern.compile("(-|\\d[\\d,]*\\.\\d{2})");
     private static final Pattern DATE_PATTERN = Pattern.compile("\\d{2} [A-Za-z]{3} \\d{4}");
 
-    public List<InduslndBankTransactionDTO> extractTransactions(byte[] pdfBytes) throws Exception {
+    public List<InduslndBankTransactionDTO>
+    extractTransactions(byte[] pdfBytes) throws Exception {
         List<InduslndBankTransactionDTO> transactions = new ArrayList<>();
 
         try (PDDocument document = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {

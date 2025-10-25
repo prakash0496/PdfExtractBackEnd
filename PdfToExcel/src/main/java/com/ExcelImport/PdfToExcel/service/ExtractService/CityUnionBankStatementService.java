@@ -2,13 +2,16 @@ package com.ExcelImport.PdfToExcel.service.ExtractService;
 
 import com.ExcelImport.PdfToExcel.dto.CityUnionBankTransactionDTO;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripperByArea;
 import org.springframework.stereotype.Service;
 import technology.tabula.ObjectExtractor;
 import technology.tabula.Page;
 import technology.tabula.RectangularTextContainer;
 import technology.tabula.Table;
+import technology.tabula.extractors.BasicExtractionAlgorithm;
 import technology.tabula.extractors.SpreadsheetExtractionAlgorithm;
 
+import java.awt.geom.Rectangle2D;
 import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,41 +23,42 @@ public class CityUnionBankStatementService {
      * Extract raw table data from PDF using Tabula
      */
     public List<List<String>> extractTableFromPdf(byte[] pdfBytes) throws Exception {
-        List<List<String>> tableData = new ArrayList<>();
+        List<List<String>> allRows = new ArrayList<>();
+        try (PDDocument pdf = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+            ObjectExtractor extractor = new ObjectExtractor(pdf);
 
-        PDDocument pdfDocument = PDDocument.load(new ByteArrayInputStream(pdfBytes));
-        ObjectExtractor extractor = new ObjectExtractor(pdfDocument);
-        SpreadsheetExtractionAlgorithm sea = new SpreadsheetExtractionAlgorithm();
+            for (int i = 1; i <= pdf.getNumberOfPages(); i++) {
+                Page page = extractor.extract(i);
+                List<Table> tables = new SpreadsheetExtractionAlgorithm().extract(page);
 
-        // Iterate through all pages
-        for (int i = 1; i <= pdfDocument.getNumberOfPages(); i++) {
-            Page page = extractor.extract(i);
-            List<Table> tables = sea.extract(page);
+                // If no data found, try BasicExtractionAlgorithm
+                if (tables.isEmpty()) {
+                    tables = new BasicExtractionAlgorithm().extract(page);
+                }
 
-            for (Table table : tables) {
-                for (List<RectangularTextContainer> row : table.getRows()) {
-                    List<String> rowData = new ArrayList<>();
-                    boolean isEmptyRow = true;
+                // As a last resort, do text region extraction
+                if (tables.isEmpty()) {
+                    PDFTextStripperByArea stripper = new PDFTextStripperByArea();
+                    stripper.addRegion("full", new Rectangle2D.Double(0, 0, 600, 800));
+                    stripper.extractRegions(pdf.getPage(i - 1));
+                    String fullText = stripper.getTextForRegion("full");
+                    allRows.add(List.of(fullText.split("\\r?\\n")));
+                    continue;
+                }
 
-                    for (RectangularTextContainer cell : row) {
-                        String cellText = cell.getText().trim();
-                        rowData.add(cellText);
-                        // Check if any cell in the row has content
-                        if (!cellText.isEmpty()) {
-                            isEmptyRow = false;
+                for (Table table : tables) {
+                    for (List<RectangularTextContainer> row : table.getRows()) {
+                        List<String> rowData = new ArrayList<>();
+                        for (RectangularTextContainer cell : row) {
+                            rowData.add(cell.getText().trim());
                         }
-                    }
-
-                    // Only add non-empty rows
-                    if (!isEmptyRow) {
-                        tableData.add(rowData);
+                        if (rowData.stream().anyMatch(s -> !s.isEmpty()))
+                            allRows.add(rowData);
                     }
                 }
             }
         }
-
-        pdfDocument.close();
-        return tableData;
+        return allRows;
     }
 
     public List<CityUnionBankTransactionDTO> mapTableToDto(List<List<String>> tableRows){

@@ -2,14 +2,17 @@ package com.ExcelImport.PdfToExcel.controller;
 
 import com.ExcelImport.PdfToExcel.dto.*;
 import com.ExcelImport.PdfToExcel.dto.Response.BankResponse;
+import com.ExcelImport.PdfToExcel.dto.Response.TransactionDTO;
 import com.ExcelImport.PdfToExcel.dto.Response.TransactionResponseDTO;
 import com.ExcelImport.PdfToExcel.service.ExcelService.CanaraBankStatementExcelService;
 import com.ExcelImport.PdfToExcel.service.ExcelService.KvbBankStatementExcelService;
 import com.ExcelImport.PdfToExcel.service.ExtractService.*;
+import com.ExcelImport.PdfToExcel.service.OcrExtractService.BankStatementParser;
+import com.ExcelImport.PdfToExcel.service.OcrExtractService.OcrExtractService;
+import com.ExcelImport.PdfToExcel.service.OcrExtractService.PdfGeneratorService;
 import com.ExcelImport.PdfToExcel.service.TallyService.TallyConversionService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.extern.log4j.Log4j;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
@@ -18,6 +21,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @CrossOrigin("*")
 @RestController
@@ -36,13 +40,17 @@ public class BankStatementController {
     private final StateBankStatementService stateBankStatementService;
     private final InduslndBankStatementService induslndBankStatementService;
     private final CityUnionBankStatementService cityUnionBankStatementService;
+    private  final IndianBankStatementService indianBankStatementService;
+    private final UniverselExtractorService extractor;
 
     @Autowired
     public BankStatementController(KvbBankStatementService kvbBankStatementService, KvbBankStatementExcelService kvbBankStatementExcelService,
                                    CanaraBankStatementService canaraBankStatementService, CanaraBankStatementExcelService canaraBankStatementExcelService ,
                                    FederalBankStatementService federalBankStatementService, ICICIBankStatementService iciciBankStatementService,
                                    HdfcBankStatementService hdfcBankStatementService, StateBankStatementService stateBankStatementService,
-                                   CityUnionBankStatementService cityUnionBankStatementService,InduslndBankStatementService induslndBankStatementService,TallyConversionService tallyConversionService) {
+                                   CityUnionBankStatementService cityUnionBankStatementService,InduslndBankStatementService induslndBankStatementService,
+                                   IndianBankStatementService indianBankStatementService,OcrExtractService ocrExtractService,TallyConversionService tallyConversionService,
+                                   UniverselExtractorService extractor) {
         this.kvbBankStatementService = kvbBankStatementService;
         this.canaraBankStatementService = canaraBankStatementService;
         this.kvbBankStatementExcelService = kvbBankStatementExcelService;
@@ -53,9 +61,10 @@ public class BankStatementController {
         this.induslndBankStatementService = induslndBankStatementService;
         this.stateBankStatementService = stateBankStatementService;
         this.cityUnionBankStatementService = cityUnionBankStatementService;
+        this.indianBankStatementService = indianBankStatementService;
+        this.extractor = extractor;
         this.tallyConversionService = tallyConversionService;
     }
-
 
     @PostMapping(value = "/extract", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public List<?> extractTransactions(@RequestParam("file") MultipartFile file, @RequestParam("bank") String bank,@RequestParam(value = "password",required = false) String password) throws Exception {
@@ -69,9 +78,14 @@ public class BankStatementController {
 
             case "CANARA": // Tabula table extraction
                 List<List<String>> tableRows = canaraBankStatementService.extractTableFromPdf(file.getBytes());
-                log.info("🔎 Table Rows Extracted (Canara):\n" + tableRows);
+                log.info("🔎 Table Rows Extracted (IndianBank):\n" + tableRows);
                 transactions = canaraBankStatementService.mapTableToDto(tableRows);
                 break;
+
+            case "INDIAN_BANK": // Tabula table extraction
+                transactions = indianBankStatementService.extractTransactionsAsDTO(file.getBytes());
+                break;
+
 
             case "FEDERAL":
                 List<List<String>> federalTableRows = federalBankStatementService.extractTableFromPdf(file.getBytes());
@@ -211,6 +225,25 @@ public class BankStatementController {
                 )));
                 break;
 
+            case "INDIAN_BANK":
+                List<IndianBankTransactionDTO> dtoList = indianBankStatementService.extractTransactionsAsDTO(file.getBytes());
+
+                dtoList.forEach(tx -> transactions.add(new TransactionResponseDTO(
+                        tx.getTransactionDate(),
+                        tx.getValueDate(),
+                        tx.getChequeNo(),
+                        tx.getBranchCode(),
+                        tx.getDescription(),
+                        tx.getDebit(),
+                        tx.getCredit(),
+                        tx.getBalance(),
+                        tx.getVoucherName(),
+                        tx.getLedgerName()
+                )));
+                break;
+
+
+
             case "FEDERAL":
                 // Extract table from PDF
                 List<List<String>> federalTable = federalBankStatementService.extractTableFromPdf(file.getBytes());
@@ -277,6 +310,26 @@ public class BankStatementController {
 
                 // Convert each DTO to TransactionResponseDTO
                 stateBankTransactionDTOS.forEach(tx -> transactions.add(new TransactionResponseDTO(
+                        tx.getTransactionDate(),
+                        tx.getValueDate(),
+                        tx.getChequeNo(),
+                        tx.getBranchCode(),
+                        tx.getDescription(),
+                        tx.getDebit(),
+                        tx.getCredit(),
+                        tx.getBalance(),
+                        tx.getVoucherName(),
+                        tx.getLedgerName()
+                )));
+                break;
+
+            case "CITY_UNION":
+                // Extract table from PDF
+                List<List<String>> cubTableRows = cityUnionBankStatementService.extractTableFromPdf(file.getBytes());
+                List<CityUnionBankTransactionDTO> cityUnionBankTransactionDTOS = cityUnionBankStatementService.mapTableToDto(cubTableRows);
+
+                // Convert each DTO to TransactionResponseDTO
+                cityUnionBankTransactionDTOS.forEach(tx -> transactions.add(new TransactionResponseDTO(
                         tx.getTransactionDate(),
                         tx.getValueDate(),
                         tx.getChequeNo(),
@@ -430,6 +483,11 @@ public class BankStatementController {
 //        }
 //    }
 
+    @PostMapping("/extracts")
+    public ResponseEntity<List<Map<String, String>>> extractPdf(@RequestParam("file") MultipartFile file) throws Exception {
+        List<Map<String, String>> transactions = extractor.extractAndParsePdf(file.getBytes());
+        return ResponseEntity.ok(transactions);
+    }
 
 
 }

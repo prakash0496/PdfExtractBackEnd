@@ -21,6 +21,7 @@
     <option value="INDUSLND">INDUSLND</option>
     <option value="SBI">State Bank</option>
     <option value="CITY_UNION">City Union</option>
+    <option value="INDIAN_BANK">Indian Bank</option>
 </select>
 <input type="text" id="password"/>
 <button onclick="uploadPdf()">Extract Transactions</button>
@@ -62,7 +63,7 @@
   formData.append("password",password.value);
 
   try {
-    const response = await fetch("http://localhost:8080/api/pdf/extract", {
+    const response = await fetch("http://localhost:8080/api/pdf/extracts", {
       method: "POST",
       body: formData
     });
