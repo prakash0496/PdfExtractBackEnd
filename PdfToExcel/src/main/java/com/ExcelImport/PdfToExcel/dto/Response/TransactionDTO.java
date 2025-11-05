@@ -9,10 +9,12 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class TransactionDTO {
 
-    private String date;
+    private String transactionDate;
     private String description;
     private String debit;
     private String credit;
     private String balance;
+    private String voucherType;
+    private String valueDate;
 
 }

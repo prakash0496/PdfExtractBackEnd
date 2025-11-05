@@ -2,6 +2,7 @@ package com.ExcelImport.PdfToExcel.service.ExcelService;
 
 import com.ExcelImport.PdfToExcel.dto.CanaraBankTransactionDTO;
 import com.ExcelImport.PdfToExcel.dto.KvbTransactionDTO;
+import com.ExcelImport.PdfToExcel.dto.Response.TransactionDTO;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -15,7 +16,7 @@ import java.util.List;
 @Service
 public class CanaraBankStatementExcelService {
 
-    public byte[] generateExcel(List<CanaraBankTransactionDTO> transactions) throws Exception {
+    public byte[] generateExcel(List<TransactionDTO> transactions) throws Exception {
         try (Workbook workbook = new XSSFWorkbook()) {
             Sheet sheet = workbook.createSheet("Bank Statement");
 
@@ -29,12 +30,10 @@ public class CanaraBankStatementExcelService {
             }
 
             int rowNum = 1;
-            for (CanaraBankTransactionDTO tx : transactions) {
+            for (TransactionDTO tx : transactions) {
                 Row row = sheet.createRow(rowNum++);
                 row.createCell(0).setCellValue(tx.getTransactionDate());
                 row.createCell(1).setCellValue(tx.getValueDate());
-                row.createCell(2).setCellValue(tx.getBranchCode());
-                row.createCell(3).setCellValue(tx.getChequeNo());
                 row.createCell(4).setCellValue(tx.getDescription());
                 row.createCell(5).setCellValue(tx.getDebit());
                 row.createCell(6).setCellValue(tx.getCredit());

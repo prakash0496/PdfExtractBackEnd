@@ -32,11 +32,11 @@ public class TallyConversionService {
         SimpleDateFormat tallyDate = new SimpleDateFormat("yyyyMMdd");
 
         for (Map<String, Object> tx : transactions) {
-            String date = (String) tx.get("transactionDate");
+            String date = (String) tx.get("date");
             String narration = (String) tx.get("description");
             String debit = (String) tx.get("debit");
             String credit = (String) tx.get("credit");
-            String voucherName = (String) tx.get("voucherName");
+            String voucherName = (String) tx.get("voucherType");
 
 
             boolean isCredit = credit != null && !credit.equals("-") && !credit.isEmpty();

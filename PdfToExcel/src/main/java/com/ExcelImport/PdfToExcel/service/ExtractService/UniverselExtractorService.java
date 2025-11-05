@@ -1,208 +1,563 @@
+
 package com.ExcelImport.PdfToExcel.service.ExtractService;
 
 
 
+import com.ExcelImport.PdfToExcel.dto.Response.TransactionDTO;
+import com.ExcelImport.PdfToExcel.service.MainExtractService.OcrExtractService;
+import com.ExcelImport.PdfToExcel.service.MainExtractService.TextBasedExtractorService;
+import com.ExcelImport.PdfToExcel.service.MainExtractService.TabulaExtractorService;
+import lombok.extern.log4j.Log4j2;
 import net.sourceforge.tess4j.ITesseract;
 import net.sourceforge.tess4j.Tesseract;
+import org.apache.pdfbox.io.MemoryUsageSetting;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.poi.ss.formula.atp.Switch;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 import technology.tabula.ObjectExtractor;
 import technology.tabula.Page;
 import technology.tabula.RectangularTextContainer;
 import technology.tabula.extractors.SpreadsheetExtractionAlgorithm;
-import technology.tabula.extractors.BasicExtractionAlgorithm;
 import technology.tabula.Table;
 
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.util.*;
 import java.util.regex.*;
 import java.util.stream.Collectors;
 
-
+@Log4j2
 @Service
 public class UniverselExtractorService {
 
-    // 🔹 Main entry point
-    public List<Map<String, String>> extractAndParsePdf(byte[] pdfBytes) throws Exception {
-        // 1️⃣ Try Tabula (table-based PDF)
-        List<Map<String, String>> tabulaData = extractUsingTabula(pdfBytes);
-        if (!tabulaData.isEmpty()) return tabulaData;
 
-        // 2️⃣ Try PDFTextStripper (digital PDF with text)
-        String textData = extractTextFromPdf(pdfBytes);
-        if (textData != null && !textData.trim().isEmpty()) {
-            return parseTransactions(textData);
+    @Autowired
+    private TabulaExtractorService tabulaExtractorService;
+
+    @Autowired
+    private FederalBankStatementService federalBankStatementService;
+
+    @Autowired
+    private TextBasedExtractorService textBasedExtractorService;
+
+    @Autowired
+    private OcrExtractService ocrExtractService;
+
+    @Autowired
+    private ICICIBankStatementService iciciBankStatementService;
+
+
+
+    // ===========================================================
+// 🔹 Main entry point – Hybrid Universal Extractor (Smart Fallback)
+// ===========================================================
+    public List<TransactionDTO> extractAndParsePdf(MultipartFile pdfBytes, String bank,String password,String accountType) throws Exception {
+        log.info("🚀 Starting extraction for bank: {}", bank.toUpperCase());
+        log.info("📦 PDF size: {} bytes", pdfBytes != null ? pdfBytes.getSize() : 0);
+
+        // ===========================================================
+        // 1️⃣ Detect PDF Type
+        // ===========================================================
+        assert pdfBytes != null;
+        boolean isDigital = isDigitalPdf(pdfBytes.getBytes(),password);
+        boolean isTable = hasTransactionTableLayout(pdfBytes.getBytes(),password);
+
+        log.info("📄 PDF Type Detected → {}", isDigital ? "Digital Text-Based" : "Possibly Scanned (Image-based)");
+        log.info("📊 Table Structure Detected → {}", isTable ? "Table-Based" : "No Table Structure");
+
+
+        List<TransactionDTO> transactions = new ArrayList<>();
+
+        // ===========================================================
+        // 2️⃣ If Table → Use Tabula Extraction
+        // ===========================================================
+        if (isTable) {
+            log.info("🔹 Table structure detected — attempting Tabula extraction...");
+            List<List<String>> rawTable = tabulaExtractorService.extractTableFromPdf(pdfBytes.getBytes(),password);
+
+            switch (bank.toUpperCase()) {
+                case "CANARA":
+                    transactions = tabulaExtractorService.CanaraBankMapDto(rawTable);
+                    break;
+                case "SBI":
+                    transactions = tabulaExtractorService.statebankMapDto(rawTable);
+                    break;
+                case "CITY_UNION":
+                    transactions = tabulaExtractorService.cityUnionBankMapDto(rawTable);
+                    break;
+                case "FEDERAL":
+                    List<List<String>> federalExtract = tabulaExtractorService.extractTableFederal(pdfBytes.getBytes(),password);
+                    transactions = tabulaExtractorService.FederalBankMapDto(federalExtract);
+                    break;
+                case "ICICI":
+                    transactions = tabulaExtractorService.extractUsingTabula(pdfBytes.getBytes());
+                    break;
+//                case "INDUSLND":
+//                    transactions = tabulaExtractorService.extractUsingTabula(pdfBytes.getBytes());
+//                    break;
+                default:
+                    throw new IllegalArgumentException("❌ Unsupported bank: " + bank);
+            }
+
+            if (!transactions.isEmpty()) {
+                log.info("✅ Tabula extracted {} structured rows for bank: {}", transactions.size(), bank);
+                return transactions;
+            }
+            log.warn("⚠️ Tabula extraction returned no transactions — trying text/hybrid extraction...");
         }
 
-        // 3️⃣ Fallback OCR (scanned PDF)
-        String ocrData = extractTextFromScannedPdf(pdfBytes);
-        return parseTransactions(ocrData);
+        // ===========================================================
+        // 3️⃣ If Digital Text-Based → Use Text Extraction
+        // ===========================================================
+        if (isDigital && !isTable) {
+            log.info("📜 Detected digital text-based PDF — using text extraction...");
+            String textData = extractTextFromPdf(pdfBytes.getBytes(),password);
+            switch (bank.toUpperCase()){
+                case "CANARA":
+                    transactions = textBasedExtractorService.parseCanaraBankTransactions(textData);
+                    break;
+                case "INDIAN_BANK":
+                    transactions = textBasedExtractorService.indianBankTransactions(textData);
+                    break;
+                case "ICICI":
+                    if ("SAVING".equalsIgnoreCase(accountType)) {
+                        // 🟢 Savings account extraction
+                        transactions = textBasedExtractorService.extractICICI(pdfBytes.getBytes());
+                    } else {
+                        // 🔵 Current account extraction
+                        transactions = textBasedExtractorService.extractUsingTabula(pdfBytes.getBytes());
+                    }
+                    break;
+//                default:
+//                    transactions = textBasedExtractorService.parseUniversalTransactions(textData);
+            }
+
+            if (!transactions.isEmpty()) {
+                log.info("✅ Successfully parsed {} transactions from text content.", transactions.size());
+                return transactions;
+            }
+            log.warn("⚠️ Text-based extraction returned no results — checking for OCR pages...");
+        }
+
+        // ===========================================================
+        // 5️⃣ Fallback → Full OCR Extraction
+        // ===========================================================
+        log.warn("⚠️ Falling back to full OCR extraction (scanned PDF)...");
+        String ocrData = ocrExtractService.extractTextFromScannedPdf(pdfBytes.getBytes(),password);
+        switch (bank.toUpperCase()) {
+            case "KVB":
+            transactions = ocrExtractService.extractTransactions(ocrData);
+            break;
+            case "INDUSLND":
+                transactions = ocrExtractService.extractTransactions(pdfBytes.getBytes());
+                break;
+
+            default:
+                transactions = ocrExtractService.ocrBasedTransactions(ocrData);
+        }
+        if (!transactions.isEmpty()) {
+            log.info("✅ OCR extraction successful — {} transactions extracted.", transactions.size());
+            return transactions;
+        }
+
+        // ===========================================================
+        // 6️⃣ Final Fallback
+        // ===========================================================
+        log.error("❌ Extraction failed — no valid data found for bank: {}", bank);
+        return transactions;
     }
+
+
 
     // ===========================================================
     // 🔹 Extract text from digital PDF
     // ===========================================================
-    public String extractTextFromPdf(byte[] pdfBytes) throws Exception {
-        try (PDDocument document = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
-            PDFTextStripper pdfStripper = new PDFTextStripper();
-            pdfStripper.setSortByPosition(true); // important for tables
-            return pdfStripper.getText(document);
-        }
-    }
+    public String extractTextFromPdf(byte[] pdfBytes,String password) throws Exception {
+        try (PDDocument document = PDDocument.load(new ByteArrayInputStream(pdfBytes),password, MemoryUsageSetting.setupTempFileOnly())) {
 
-    // ===========================================================
-    // 🔹 Extract text from scanned PDF (OCR)
-    // ===========================================================
-    private String extractTextFromScannedPdf(byte[] pdfBytes) throws Exception {
-        try (PDDocument document = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
-            PDFRenderer pdfRenderer = new PDFRenderer(document);
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+            stripper.setStartPage(1);
+            stripper.setEndPage(document.getNumberOfPages());
 
-            ITesseract tesseract = new Tesseract();
-            tesseract.setDatapath("E:/PdfExtract/PdfToExcel/PdfToExcel/src/main/java/com/ExcelImport/PdfToExcel/tessdata");
-            tesseract.setLanguage("eng");
+            // Step 1️⃣: Raw text extraction
+            String rawText = stripper.getText(document);
 
-            StringBuilder fullText = new StringBuilder();
-            for (int page = 0; page < document.getNumberOfPages(); ++page) {
-                BufferedImage image = pdfRenderer.renderImageWithDPI(page, 400);
-                String extractedText = tesseract.doOCR(image);
-                fullText.append(extractedText).append("\n");
+            // Step 2️⃣: Normalize spacing and clean up layout
+            String normalized = rawText
+                    .replaceAll("[ \\t]+", " ")     // replace multiple spaces/tabs
+                    .replaceAll("\\r", "")          // remove carriage returns
+                    .replaceAll("\\n{2,}", "\n")    // collapse multiple newlines
+                    .trim();
+
+            // Step 3️⃣: Intelligent filtering of unwanted lines
+            StringBuilder sb = new StringBuilder();
+            String[] lines = normalized.split("\\n");
+
+            for (String line : lines) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty()) continue;
+
+                // Skip generic headers/footers/disclaimers (no bank name hardcoded)
+                if (trimmed.matches("(?i).*page\\s*\\d+\\s*(of)?\\s*\\d+.*")) continue; // Page X of Y
+                if (trimmed.matches("(?i).*confidential.*")) continue;
+                if (trimmed.matches("(?i).*statement generated on.*")) continue;
+                if (trimmed.matches("(?i).*this is a system generated.*")) continue;
+                if (trimmed.matches("(?i).*do not reply.*")) continue;
+                if (trimmed.matches("(?i).*for any queries.*")) continue;
+                if (trimmed.matches("(?i).*customer service.*")) continue;
+                if (trimmed.matches("(?i).*end of statement.*")) continue;
+                if (trimmed.matches("(?i).*(www\\.|http).*")) continue; // websites
+                if (trimmed.matches("(?i).*helpline.*")) continue;
+                if (trimmed.matches("(?i).*contact us.*")) continue;
+                if (trimmed.matches("(?i).*email us at.*")) continue;
+                if (trimmed.matches("(?i).*branch code.*")) continue;
+                if (trimmed.matches("(?i).*issued by.*")) continue;
+
+                // keep valid lines
+                sb.append(trimmed).append("\n");
             }
-            return fullText.toString();
+
+            // Step 4️⃣: Final cleanup
+            return sb.toString().trim();
+        }
+    }
+
+
+
+
+
+    /**
+     * Detect if the PDF is digital (text-based) or scanned (image-only)
+     */
+    private boolean isDigitalPdf(byte[] pdfBytes,String password) {
+        if (pdfBytes == null || pdfBytes.length == 0) return false;
+
+        try (PDDocument document = PDDocument.load(new ByteArrayInputStream(pdfBytes),password)) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+            String text = stripper.getText(document);
+
+            // ✅ If extracted text length > threshold, it's a digital PDF
+            if (text != null && text.trim().length() > 50) {
+                log.info("🔍 Detected text content length: {}", text.trim().length());
+                return true; // text-based (digital)
+            } else {
+                log.warn("🖼️ Very low text content detected — likely a scanned PDF.");
+                return false; // scanned or image-based
+            }
+        } catch (Exception e) {
+            log.error("⚠️ Error checking PDF type: {}", e.getMessage());
+            return false;
         }
     }
 
     // ===========================================================
-    // 🔹 Extract tables using Tabula
-    // ===========================================================
-    private List<Map<String, String>> extractUsingTabula(byte[] pdfBytes) {
-        List<Map<String, String>> extractedData = new ArrayList<>();
+// 🔹 Check if PDF has Table Layout specifically for Transaction Section
+// ===========================================================
+private boolean hasTransactionTableLayout(byte[] pdfBytes,String password) {
+    try (PDDocument pdfDocument = PDDocument.load(new ByteArrayInputStream(pdfBytes),password)) {
 
-        try (PDDocument pdfDocument = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
-            ObjectExtractor extractor = new ObjectExtractor(pdfDocument);
-            SpreadsheetExtractionAlgorithm spreadsheetExtractor = new SpreadsheetExtractionAlgorithm();
-            BasicExtractionAlgorithm basicExtractor = new BasicExtractionAlgorithm();
+        ObjectExtractor extractor = new ObjectExtractor(pdfDocument);
+        SpreadsheetExtractionAlgorithm spreadsheetExtractor = new SpreadsheetExtractionAlgorithm();
 
-            for (int i = 1; i <= pdfDocument.getNumberOfPages(); i++) {
-                Page page = extractor.extract(i);
-                List<Table> tables = spreadsheetExtractor.extract(page);
-                if (tables.isEmpty()) tables = basicExtractor.extract(page);
+        int pagesToCheck = Math.min(pdfDocument.getNumberOfPages(), 3);
+        PDFTextStripper textStripper = new PDFTextStripper();
 
+        for (int i = 1; i <= pagesToCheck; i++) {
+            Page page = extractor.extract(i);
+            List<Table> tables = spreadsheetExtractor.extract(page);
+
+            // =============================================================
+            // 🔹 1️⃣ Case 1: Headings + Rows are in table cells
+            // =============================================================
+            if (tables != null && !tables.isEmpty()) {
                 for (Table table : tables) {
                     List<List<RectangularTextContainer>> rows = table.getRows();
-                    if (rows == null || rows.size() <= 1) continue;
+                    if (rows.size() < 2) continue;
 
-                    List<String> headers = rows.get(0).stream()
-                            .map(cell -> cell == null ? "" : cell.getText().trim())
-                            .map(h -> h.isEmpty() ? "Column" : h)
+                    // First row (possible header)
+                    List<String> header = rows.get(0).stream()
+                            .map(c -> c.getText().trim().toLowerCase())
                             .collect(Collectors.toList());
 
-                    for (int r = 1; r < rows.size(); r++) {
-                        List<RectangularTextContainer> cells = rows.get(r);
-                        Map<String, String> rowMap = new LinkedHashMap<>();
-                        for (int c = 0; c < headers.size(); c++) {
-                            String header = headers.get(c);
-                            String cellText = "";
-                            if (cells != null && c < cells.size() && cells.get(c) != null) {
-                                cellText = cells.get(c).getText().trim();
-                            }
-                            rowMap.put(header, cellText);
-                        }
+                    // Data row
+                    List<String> firstDataRow = rows.get(1).stream()
+                            .map(c -> c.getText().trim().toLowerCase())
+                            .collect(Collectors.toList());
 
-                        boolean hasValue = rowMap.values().stream().anyMatch(v -> v != null && !v.isEmpty());
-                        if (hasValue) extractedData.add(rowMap);
+                    boolean headerLike = header.stream().anyMatch(h ->
+                            h.contains("date") || h.contains("txn") || h.contains("description") || h.contains("debit")
+                    );
+
+                    boolean rowLike = firstDataRow.stream().anyMatch(v ->
+                            v.matches("\\d{1,2}[-/ ]\\d{1,2}[-/ ]\\d{2,4}") // looks like date
+                    );
+
+                    if (headerLike || rowLike) {
+                        System.out.println("📊 Table structure detected on page " + i + " (header or rows).");
+                        return true;
                     }
                 }
             }
-        } catch (Exception e) {
-            return Collections.emptyList();
-        }
 
-        return extractedData;
-    }
-
-    // ===========================================================
-    // 🔹 Parse OCR or text-based PDF into structured JSON
-    // ===========================================================
-    private List<Map<String, String>> parseTransactions(String ocrText) {
-        List<Map<String, String>> transactions = new ArrayList<>();
-        String[] lines = ocrText.split("\\r?\\n");
-
-        Pattern datePattern = Pattern.compile("\\b\\d{1,2}[-/ ]\\d{1,2}[-/ ]\\d{2,4}\\b");
-        StringBuilder currentTransaction = new StringBuilder();
-
-        for (String line : lines) {
-            line = line.trim();
-            if (line.isEmpty()) continue;
-
-            Matcher matcher = datePattern.matcher(line);
-            if (matcher.find() && matcher.start() < 5) {
-                if (currentTransaction.length() > 0) {
-                    Map<String, String> data = parseRow(currentTransaction.toString());
-                    if (!data.isEmpty()) transactions.add(data);
-                    currentTransaction.setLength(0);
+            // =============================================================
+            // 🔹 2️⃣ Case 2: Headings plain text, but table rows exist
+            // =============================================================
+            String text = extractTextFromPage(pdfDocument, textStripper, i);
+            if (text.matches("(?is).*txn\\s*date.*debit.*credit.*balance.*")) {
+                // Check if lines look aligned (columns aligned)
+                if (looksLikeTabularText(text)) {
+                    System.out.println("📄 Text-based table rows detected on page " + i);
+                    return true;
                 }
-                currentTransaction.append(line);
-            } else if (currentTransaction.length() > 0) {
-                currentTransaction.append(" ").append(line);
             }
         }
 
-        if (currentTransaction.length() > 0) {
-            Map<String, String> data = parseRow(currentTransaction.toString());
-            if (!data.isEmpty()) transactions.add(data);
+        System.out.println("⚠️ No table-like structure detected.");
+    } catch (Exception e) {
+        System.err.println("❌ hasTransactionTableLayout failed: " + e.getMessage());
+    }
+    return false;
+}
+
+    private String extractTextFromPage(PDDocument doc, PDFTextStripper stripper, int page) throws IOException {
+        stripper.setStartPage(page);
+        stripper.setEndPage(page);
+        return stripper.getText(doc);
+    }
+
+    private boolean looksLikeTabularText(String text) {
+        String[] lines = text.split("\\r?\\n");
+        int count = 0;
+        for (String line : lines) {
+            // detect date-like start
+            if (line.trim().matches("^\\d{1,2}[-/ ]\\d{1,2}[-/ ]\\d{2,4}.*")) {
+                count++;
+            }
+        }
+        // if multiple lines start like a date → looks like transaction rows
+        return count >= 3;
+    }
+
+
+    public List<TransactionDTO> parseUniversalTransactions(String text) {
+        List<TransactionDTO> transactions = new ArrayList<>();
+        if (text == null || text.trim().isEmpty()) {
+            log.warn("⚠️ PDF text is empty. No transactions to parse.");
+            return transactions;
         }
 
+        String[] lines = text.split("\\r?\\n");
+        Pattern datePattern = Pattern.compile("^(\\d{1,2}[-/\\s]\\d{1,2}[-/\\s]\\d{2,4})");
+
+        List<String> headers = null;
+        StringBuilder currentBlock = new StringBuilder();
+
+        log.info("📄 Starting universal transaction parsing... Total lines: {}", lines.length);
+
+        for (String rawLine : lines) {
+            String line = rawLine.trim();
+            if (line.isEmpty()) continue;
+
+            // Detect header
+            String lower = line.toLowerCase();
+            if (headers == null && (lower.contains("date") &&
+                    (lower.contains("cheque") || lower.contains("chq.no") || lower.contains("mode") ||
+                            lower.contains("particular")||lower.contains("particulars") || lower.contains("description") || lower.contains("transaction details")))) {
+                headers = splitRowIntoCells(line);
+                log.info("🧭 Detected header columns: {}", headers);
+                continue;
+            }
+
+            // Skip obvious summary/header lines
+            if (lower.matches(".*(opening balance|closing balance|account summary|page no|statement|total|grand total|cheque|mode).*")) {
+                continue;
+            }
+
+            // ❌ Skip known footer/legend/summary sections
+            if (lower.contains("legends for transactions")
+                    || lower.contains("sincerely,")
+                    || lower.contains("team icici")
+                    || lower.contains("summary of account")
+                    || lower.contains("category of service")
+                    || lower.contains("regd address")
+                    || lower.contains("page total")
+                    || lower.contains("this is a system-generated")
+                    || lower.contains("your details with us")
+                    || lower.contains("your base branch")
+                    || lower.contains("registration no")
+                    || lower.contains("page ")
+                    || lower.contains("total ")
+                    || lower.contains("statement of transactions")
+                    || lower.contains("vat/mat/nfs - cash withdrawal")
+                    || lower.contains("eba - transaction on icici direct")
+                    || lower.contains("vps/ips - debit card transaction")
+                    || lower.contains("top - mobile recharge")) {
+                continue; // skip these lines completely
+            }
+
+
+            Matcher matcher = datePattern.matcher(line);
+            if (matcher.find()) {
+                // New transaction starts
+                if (currentBlock.length() > 0) {
+                    log.debug("🧩 Transaction block ready for parse:\n{}", currentBlock);
+                    TransactionDTO dto = parseTransactionBlockToDto(currentBlock.toString());
+                    if (dto != null) {
+                        log.info("✅ Parsed transaction: {}", dto);
+                        transactions.add(dto);
+                    }
+                    currentBlock.setLength(0);
+                }
+
+                currentBlock.append(line);
+            } else if (currentBlock.length() > 0) {
+                // Continuation line for current transaction
+                currentBlock.append(" ").append(line);
+            }
+        }
+
+        // Final block
+        if (currentBlock.length() > 0) {
+            log.debug("🧩 Final transaction block:\n{}", currentBlock);
+            TransactionDTO dto = parseTransactionBlockToDto(currentBlock.toString());
+            if (dto != null) {
+                log.info("✅ Parsed final transaction: {}", dto);
+                transactions.add(dto);
+            }
+        }
+
+        log.info("🏁 Completed parsing. Total extracted transactions: {}", transactions.size());
         return transactions;
     }
 
-    // ===========================================================
-    // 🔹 Parse a single transaction line into JSON
-    // ===========================================================
-    private Map<String, String> parseRow(String row) {
-        Map<String, String> map = new LinkedHashMap<>();
 
-        // Date
-        Pattern datePattern = Pattern.compile("\\b\\d{1,2}[-/ ]\\d{1,2}[-/ ]\\d{2,4}\\b");
-        Matcher dateMatcher = datePattern.matcher(row);
-        if (dateMatcher.find()) map.put("Date", dateMatcher.group());
+    // helper to split row into cells (tries pipe first then multiple spaces)
+    private List<String> splitRowIntoCells(String line) {
+        String[] parts;
+        if (line.contains("|")) {
+            parts = line.split("\\|");
+        } else {
+            parts = line.split("\\s{2,}"); // two-or-more spaces as separator
+        }
+        return Arrays.stream(parts)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+    }
 
-        // Clean row text
-        row = row.replaceAll("[|]", " ").replaceAll(" +", " ").replaceAll("[^A-Za-z0-9.,/-]", " ").trim();
+    // escape marker content to avoid accidental '||' occurrences
+    private String escapeMarker(String s) {
+        return s.replace("||", "|");
+    }
+    private String unescapeMarker(String s) {
+        return s;
+    }
+    private static double lastBalanceValue = -1; // place this as a class-level static variable
 
-        // Amounts
-        Pattern amountPattern = Pattern.compile("\\b\\d{1,3}(?:,\\d{2,3})*(?:\\.\\d{1,2})?\\b");
-        Matcher amtMatcher = amountPattern.matcher(row);
-        List<String> amounts = new ArrayList<>();
-        while (amtMatcher.find()) {
-            String amt = amtMatcher.group().replaceAll(",", "");
-            if (amt.length() > 2 && !amt.contains(".")) amt = amt.substring(0, amt.length() - 2) + "." + amt.substring(amt.length() - 2);
-            amounts.add(amt);
+
+    /**
+     * parseTransactionBlockToDto now accepts chequeNo (may be null).
+     * It will remove the chequeNo from description if provided, while preserving IMPS/UPI IDs.
+     */
+    private TransactionDTO parseTransactionBlockToDto(String block) {
+        if (block == null || block.trim().isEmpty()) return null;
+
+        TransactionDTO dto = new TransactionDTO();
+
+        // 1️⃣ Extract and remove first date (main transaction date)
+        Matcher dateMatcher = Pattern.compile("(\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4})").matcher(block);
+        if (dateMatcher.find()) {
+            String firstDate = dateMatcher.group(1);
+            dto.setTransactionDate(firstDate);
+            block = block.replaceFirst(Pattern.quote(firstDate), " ");
         }
 
-        // Debit / Credit / Balance
-        if (amounts.size() >= 3) {
-            map.put("Withdrawals", amounts.get(amounts.size() - 3));
-            map.put("Credits", amounts.get(amounts.size() - 2));
-            map.put("Balance", amounts.get(amounts.size() - 1));
-        } else if (amounts.size() == 2) {
-            String descLower = row.toLowerCase();
-            if (descLower.contains("cr") || descLower.contains("credit") || descLower.contains("by"))
-                map.put("Credits", amounts.get(0));
-            else
-                map.put("Withdrawals", amounts.get(0));
-            map.put("Balance", amounts.get(1));
-        } else if (amounts.size() == 1) map.put("Balance", amounts.get(0));
+        // 2️⃣ Remove cheque-related or header-like words
+        block = block.replaceAll("(?i)\\b(CHEQUE|CHQ|INSTRUMENT|NO\\.|NUMBER | MOBILE BANKING)\\b", " ");
+        block = block.replaceAll("\\b\\d{1,2}:\\d{2}:\\d{2}\\b", " "); // remove time like 13:45:21
+        block = block.replaceAll("(\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4})", " "); // remove remaining dates
 
-        // Description cleanup
-        String description = row.replaceAll("\\b\\d{1,2}[-/ ]\\d{1,2}[-/ ]\\d{2,4}\\b", "")
-                .replaceAll("\\b\\d{1,3}(?:,\\d{3})*(?:\\.\\d{1,2})?\\b", "")
-                .replaceAll(" +", " ").trim();
-        map.put("Description", description);
+        // 3️⃣ Extract all valid monetary amounts (₹-like patterns)
+        Pattern amountPattern = Pattern.compile("(\\d{1,3}(?:,\\d{2,3})*(?:\\.\\d{1,2})?)");
+        Matcher amtMatcher = amountPattern.matcher(block);
+        List<String> amounts = new ArrayList<>();
+        while (amtMatcher.find()) {
+            String amt = amtMatcher.group(1).trim();
+            String digitsOnly = amt.replaceAll("[^0-9]", "");
+            if (amt.contains(",") || amt.contains(".") | digitsOnly.length() >= 4)
+                amounts.add(amt);
+        }
 
-        return map;
+        String debit = "-", credit = "-", balance = "-";
+
+        // ✅ NEW LOGIC (ADDED ONLY) — Smart comparison-based adjustment
+        try {
+            if (!amounts.isEmpty()) {
+                // Get the current balance (last value)
+                balance = amounts.get(amounts.size() - 1);
+                double currentBalance = Double.parseDouble(balance.replaceAll(",", ""));
+
+                // Transaction amount (previous number, if any)
+                double txnAmount = 0;
+                if (amounts.size() >= 2) {
+                    String amt = amounts.get(amounts.size() - 2);
+                    txnAmount = Double.parseDouble(amt.replaceAll(",", ""));
+                }
+
+                // Compare with previous balance (if available)
+                if (lastBalanceValue != -1) {
+                    if (currentBalance > lastBalanceValue) {
+                        // ✅ Balance increased → Credit
+                        credit = String.format("%,.2f", txnAmount);
+                        debit = "-";
+                        dto.setVoucherType("Receipt");
+                    } else if (currentBalance < lastBalanceValue) {
+                        // ✅ Balance decreased → Debit
+                        debit = String.format("%,.2f", txnAmount);
+                        credit = "-";
+                        dto.setVoucherType("Payment");
+                    }
+                }
+
+                // Update stored last balance
+                lastBalanceValue = currentBalance;
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ Smart credit/debit comparison failed: {}", e.getMessage());
+        }
+
+        // Apply updated values
+        dto.setDebit(debit);
+        dto.setCredit(credit);
+        dto.setBalance(balance);
+
+        // 🧹 STEP: Clean up extra numeric columns at end of line (debit/credit/balance)
+// Removes up to last 3 numbers like 1,00,000.00 or -7,445.00 at the end
+        String cleanedBlock = block.replaceAll(
+                "(\\s*|-?\\d{1,3}(?:,\\d{2,3})*(?:\\.\\d{1,2})?){1,3}\\s*(Cr|Dr)?\\s*$",
+                "").trim();
+
+// 🧹 Also remove any lingering multiple spaces
+        cleanedBlock = cleanedBlock.replaceAll("\\s+", " ").trim();
+
+// ✅ Log before & after cleaning (for debugging)
+        log.info("🧾 Before clean: {}", block);
+        log.info("✅ After clean: {}", cleanedBlock);
+
+// 🧾 Set final description
+        dto.setDescription(cleanedBlock.isEmpty() ? "-" : cleanedBlock);
+        return dto;
     }
+
+
+
+
 
 }

@@ -4,12 +4,13 @@ import com.ExcelImport.PdfToExcel.dto.*;
 import com.ExcelImport.PdfToExcel.dto.Response.BankResponse;
 import com.ExcelImport.PdfToExcel.dto.Response.TransactionDTO;
 import com.ExcelImport.PdfToExcel.dto.Response.TransactionResponseDTO;
+import com.ExcelImport.PdfToExcel.dto.Response.UniverseResponse;
 import com.ExcelImport.PdfToExcel.service.ExcelService.CanaraBankStatementExcelService;
+import com.ExcelImport.PdfToExcel.service.ExcelService.IciciBankStatementExcelService;
 import com.ExcelImport.PdfToExcel.service.ExcelService.KvbBankStatementExcelService;
+import com.ExcelImport.PdfToExcel.service.ExcelService.StateBankStatementExcelService;
 import com.ExcelImport.PdfToExcel.service.ExtractService.*;
-import com.ExcelImport.PdfToExcel.service.OcrExtractService.BankStatementParser;
-import com.ExcelImport.PdfToExcel.service.OcrExtractService.OcrExtractService;
-import com.ExcelImport.PdfToExcel.service.OcrExtractService.PdfGeneratorService;
+import com.ExcelImport.PdfToExcel.service.MainExtractService.OcrExtractService;
 import com.ExcelImport.PdfToExcel.service.TallyService.TallyConversionService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,7 +22,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 @CrossOrigin("*")
 @RestController
@@ -41,16 +41,18 @@ public class BankStatementController {
     private final InduslndBankStatementService induslndBankStatementService;
     private final CityUnionBankStatementService cityUnionBankStatementService;
     private  final IndianBankStatementService indianBankStatementService;
+    private final  IciciBankStatementExcelService iciciBankStatementExcelService;
+    private final StateBankStatementExcelService stateBankStatementExcelService;
     private final UniverselExtractorService extractor;
 
     @Autowired
-    public BankStatementController(KvbBankStatementService kvbBankStatementService, KvbBankStatementExcelService kvbBankStatementExcelService,
+    public BankStatementController(KvbBankStatementService kvbBankStatementService, KvbBankStatementExcelService kvbBankStatementExcelService, IciciBankStatementExcelService iciciBankStatementExcelService,
                                    CanaraBankStatementService canaraBankStatementService, CanaraBankStatementExcelService canaraBankStatementExcelService ,
                                    FederalBankStatementService federalBankStatementService, ICICIBankStatementService iciciBankStatementService,
                                    HdfcBankStatementService hdfcBankStatementService, StateBankStatementService stateBankStatementService,
-                                   CityUnionBankStatementService cityUnionBankStatementService,InduslndBankStatementService induslndBankStatementService,
-                                   IndianBankStatementService indianBankStatementService,OcrExtractService ocrExtractService,TallyConversionService tallyConversionService,
-                                   UniverselExtractorService extractor) {
+                                   CityUnionBankStatementService cityUnionBankStatementService, InduslndBankStatementService induslndBankStatementService,
+                                   IndianBankStatementService indianBankStatementService, OcrExtractService ocrExtractService, TallyConversionService tallyConversionService,
+                                   UniverselExtractorService extractor,StateBankStatementExcelService stateBankStatementExcelService) {
         this.kvbBankStatementService = kvbBankStatementService;
         this.canaraBankStatementService = canaraBankStatementService;
         this.kvbBankStatementExcelService = kvbBankStatementExcelService;
@@ -62,6 +64,8 @@ public class BankStatementController {
         this.stateBankStatementService = stateBankStatementService;
         this.cityUnionBankStatementService = cityUnionBankStatementService;
         this.indianBankStatementService = indianBankStatementService;
+        this.iciciBankStatementExcelService = iciciBankStatementExcelService;
+        this.stateBankStatementExcelService = stateBankStatementExcelService;
         this.extractor = extractor;
         this.tallyConversionService = tallyConversionService;
     }
@@ -88,17 +92,18 @@ public class BankStatementController {
 
 
             case "FEDERAL":
-                List<List<String>> federalTableRows = federalBankStatementService.extractTableFromPdf(file.getBytes());
+                List<List<String>> federalTableRows = federalBankStatementService.extractTableFromPdf(file.getBytes(),password);
                 log.info("🔎 Table Rows Extracted (Federal):\n" +federalTableRows);
                 transactions = federalBankStatementService.mapFederalTableToDto(federalTableRows);
                 break;
 
             case "ICICI":
                 // FIXED: Extract text first, then parse transactions
-                String pdfText = iciciBankStatementService.extractTextFromPdf(file.getBytes());
-                log.info("🔎 Extracted Text (ICICI):\n" + pdfText);
-                transactions = iciciBankStatementService.extractTransaction(pdfText);
+
+               // log.info("🔎 Extracted Text (ICICI):\n" + pdfText);
+                transactions = iciciBankStatementService.extractUsingTabula(file.getBytes());
                 break;
+
 
             case "HDFC":
                 // FIXED: Extract text first, then parse transactions
@@ -114,7 +119,7 @@ public class BankStatementController {
                 break;
 
             case "SBI": // Tabula table extraction
-                List<List<String>> sbitableRows = stateBankStatementService.extractTableFromPdf(file.getBytes());
+                List<List<String>> sbitableRows = stateBankStatementService.extractTableFromPdf(file.getBytes(),password);
                 log.info("🔎 Table Rows Extracted (SBI):\n" + sbitableRows);
                 transactions = stateBankStatementService.mapTableToDto(sbitableRows);
                 break;
@@ -134,25 +139,41 @@ public class BankStatementController {
     }
 
 
-    @PostMapping(value = "/download-excel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PostMapping("/download-excel")
     public ResponseEntity<byte[]> downloadExcel(
-            @RequestParam("file") MultipartFile file,
-            @RequestParam("bank") String bank) {
+            @RequestParam("bank") String bank,
+            @RequestParam("tableData") String tableData) {
 
         try {
             byte[] excelBytes;
 
+            ObjectMapper mapper = new ObjectMapper();
+
             switch (bank.toUpperCase()) {
                 case "KVB":
-                    String kvbText = kvbBankStatementService.extractTextFromScannedPdf(file.getBytes());
-                    List<KvbTransactionDTO> kvbTransactions = kvbBankStatementService.extractTransactions(kvbText);
-                    excelBytes = kvbBankStatementExcelService.generateExcel(kvbTransactions);
+                    List<TransactionDTO> kvbList = mapper.readValue(tableData,
+                            new TypeReference<List<TransactionDTO>>() {});
+                    excelBytes = kvbBankStatementExcelService.generateExcel(kvbList);
                     break;
 
                 case "CANARA":
-                    List<List<String>> ocrTexts = canaraBankStatementService.extractTableFromPdf(file.getBytes());
-                    List<CanaraBankTransactionDTO> canaraTransactions = canaraBankStatementService.mapTableToDto(ocrTexts);
-                    excelBytes = canaraBankStatementExcelService.generateExcel(canaraTransactions);
+                    List<TransactionDTO> canaraList= mapper.readValue(tableData,
+                            new TypeReference<List<TransactionDTO>>() {});
+                    excelBytes = canaraBankStatementExcelService.generateExcel(canaraList);
+                    break;
+
+                case "ICICI":
+                    // ✅ Parse JSON data into DTO list instead of PDF parsing
+                    List<TransactionDTO> iciciList = mapper.readValue(tableData,
+                            new TypeReference<List<TransactionDTO>>() {});
+                    excelBytes = iciciBankStatementExcelService.generateExcel(iciciList);
+                    break;
+
+                case "SBI":
+                    // ✅ Parse JSON data into DTO list instead of reading PDF
+                    List<TransactionDTO> sbiList = mapper.readValue(tableData,
+                            new TypeReference<List<TransactionDTO>>() {});
+                    excelBytes = stateBankStatementExcelService.generateExcel(sbiList);
                     break;
 
                 default:
@@ -160,7 +181,8 @@ public class BankStatementController {
             }
 
             return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + bank + "_BankStatement.xlsx")
+                    .header(HttpHeaders.CONTENT_DISPOSITION,
+                            "attachment; filename=" + bank + "_BankStatement.xlsx")
                     .contentType(MediaType.parseMediaType(
                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
                     .body(excelBytes);
@@ -175,7 +197,8 @@ public class BankStatementController {
     @PostMapping(value = "/extract-json", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<BankResponse> extractTransactionsAsJson(
             @RequestParam("file") MultipartFile file,
-            @RequestParam("bank") String bank) throws Exception {
+            @RequestParam("bank") String bank,
+            @RequestParam(value = "password",required = false)String password) throws Exception {
 
         List<TransactionResponseDTO> transactions = new ArrayList<>();
 
@@ -246,7 +269,7 @@ public class BankStatementController {
 
             case "FEDERAL":
                 // Extract table from PDF
-                List<List<String>> federalTable = federalBankStatementService.extractTableFromPdf(file.getBytes());
+                List<List<String>> federalTable = federalBankStatementService.extractTableFromPdf(file.getBytes(),password);
                 List<FederalBankTransactionDTO> fedaral = federalBankStatementService.mapFederalTableToDto(federalTable);
 
                 // Convert each DTO to TransactionResponseDTO
@@ -284,28 +307,29 @@ public class BankStatementController {
                 break;
 
             case "ICICI":
-                // Extract table from PDF
-                String iciciTable = iciciBankStatementService.extractTextFromPdf(file.getBytes());
-                List<ICICIBankTransactionDTO> iciciBankTransactionDTOS = iciciBankStatementService.extractTransaction(iciciTable);
+                // 🧩 Extract structured transaction table using Tabula
+                List<ICICIBankTransactionDTO> iciciBankTransactionDTOS = iciciBankStatementService.extractUsingTabula(file.getBytes());
 
-                // Convert each DTO to TransactionResponseDTO
-                iciciBankTransactionDTOS.forEach(tx -> transactions.add(new TransactionResponseDTO(
-                        tx.getTransactionDate(),
-                        tx.getValueDate(),
-                        tx.getChequeNo(),
-                        tx.getBranchCode(),
-                        tx.getDescription(),
-                        tx.getDebit(),
-                        tx.getCredit(),
-                        tx.getBalance(),
-                        tx.getVoucherName(),
-                        tx.getLedgerName()
-                )));
+                // ✅ Convert DTO → TransactionResponseDTO
+                iciciBankTransactionDTOS.forEach(tx ->transactions.add( new TransactionResponseDTO(
+                                tx.getTransactionDate(),
+                                tx.getValueDate(),
+                                tx.getChequeNo(),
+                                tx.getBranchCode(),
+                                tx.getDescription(),
+                                tx.getDebit(),
+                                tx.getCredit(),
+                                tx.getBalance(),
+                                tx.getVoucherName(),
+                                tx.getLedgerName()
+                        )));
+
                 break;
+
 
             case "SBI":
                 // Extract table from PDF
-                List<List<String>> sbiTableRows = stateBankStatementService.extractTableFromPdf(file.getBytes());
+                List<List<String>> sbiTableRows = stateBankStatementService.extractTableFromPdf(file.getBytes(),password);
                 List<StateBankTransactionDTO> stateBankTransactionDTOS = stateBankStatementService.mapTableToDto(sbiTableRows);
 
                 // Convert each DTO to TransactionResponseDTO
@@ -368,49 +392,50 @@ public class BankStatementController {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_XML);
 
+
             switch (bank.toUpperCase()) {
                 case "CANARA":
-                    List<CanaraBankTransactionDTO> canaraTransactions =
-                            mapper.readValue(tableDataJson, new TypeReference<List<CanaraBankTransactionDTO>>() {});
+                    List<TransactionDTO> canaraTransactions =
+                            mapper.readValue(tableDataJson, new TypeReference<List<TransactionDTO>>() {});
                     tallyXml = tallyConversionService.generateTallyXml(tableDataJson, bank,typeBank);
                     headers.setContentDisposition(ContentDisposition.attachment()
                             .filename("TallyImport_Canara.xml").build());
                     break;
 
                 case "KVB":
-                    List<KvbTransactionDTO> kvbTransactions =
-                            mapper.readValue(tableDataJson, new TypeReference<List<KvbTransactionDTO>>() {});
+                    List<TransactionDTO> kvbTransactions =
+                            mapper.readValue(tableDataJson, new TypeReference<List<TransactionDTO>>() {});
                     tallyXml = tallyConversionService.generateTallyXml(tableDataJson, bank,typeBank);
                     headers.setContentDisposition(ContentDisposition.attachment()
                             .filename("TallyImport_KVB.xml").build());
                     break;
 
                 case "FEDERAL":
-                    List<FederalBankTransactionDTO> federalBankTransactionDTOS =
-                            mapper.readValue(tableDataJson, new TypeReference<List<FederalBankTransactionDTO>>() {});
+                    List<TransactionDTO> federalBankTransactionDTOS =
+                            mapper.readValue(tableDataJson, new TypeReference<List<TransactionDTO>>() {});
                     tallyXml = tallyConversionService.generateTallyXml(tableDataJson, bank,typeBank);
                     headers.setContentDisposition(ContentDisposition.attachment()
                             .filename("TallyImport_Fedaral.xml").build());
                     break;
                 case "ICICI":
-                    List<ICICIBankTransactionDTO> iciciBankTransactionDTOS  =
-                            mapper.readValue(tableDataJson, new TypeReference<List<ICICIBankTransactionDTO>>() {});
+                    List<TransactionDTO> iciciBankTransactionDTOS  =
+                            mapper.readValue(tableDataJson, new TypeReference<List<TransactionDTO>>() {});
                     tallyXml = tallyConversionService.generateTallyXml(tableDataJson, bank,typeBank);
                     headers.setContentDisposition(ContentDisposition.attachment()
                             .filename("TallyImport_ICICI.xml").build());
                     break;
 
                 case "SBI":
-                    List<StateBankTransactionDTO>  stateBankTransactionDTOS =
-                            mapper.readValue(tableDataJson, new TypeReference<List<StateBankTransactionDTO>>() {});
+                    List<TransactionDTO>  stateBankTransactionDTOS =
+                            mapper.readValue(tableDataJson, new TypeReference<List<TransactionDTO>>() {});
                     tallyXml = tallyConversionService.generateTallyXml(tableDataJson, bank,typeBank);
                     headers.setContentDisposition(ContentDisposition.attachment()
                             .filename("TallyImport_SBI.xml").build());
                     break;
 
                 case "INDUSLND":
-                    List<InduslndBankTransactionDTO> induslndBankTransactionDTOS  =
-                            mapper.readValue(tableDataJson, new TypeReference<List<InduslndBankTransactionDTO>>() {});
+                    List<TransactionDTO> induslndBankTransactionDTOS  =
+                            mapper.readValue(tableDataJson, new TypeReference<List<TransactionDTO>>() {});
                     tallyXml = tallyConversionService.generateTallyXml(tableDataJson, bank,typeBank);
                     headers.setContentDisposition(ContentDisposition.attachment()
                             .filename("TallyImport_INDUSLND.xml").build());
@@ -483,11 +508,18 @@ public class BankStatementController {
 //        }
 //    }
 
-    @PostMapping("/extracts")
-    public ResponseEntity<List<Map<String, String>>> extractPdf(@RequestParam("file") MultipartFile file) throws Exception {
-        List<Map<String, String>> transactions = extractor.extractAndParsePdf(file.getBytes());
-        return ResponseEntity.ok(transactions);
+    @PostMapping(value = "/extracts", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<UniverseResponse> extractPdf(@RequestParam("file") MultipartFile file,
+                                                       @RequestParam("bank") String bank,
+                                                       @RequestParam(value = "password",required = false)String password,
+                                                       @RequestParam(value = "accountType",required = false)String accountType) throws Exception {
+
+        List<TransactionDTO> transactions = extractor.extractAndParsePdf(file, bank,password,accountType);
+
+        UniverseResponse response = new UniverseResponse("success", bank, transactions);
+        return ResponseEntity.ok(response);
     }
+
 
 
 }

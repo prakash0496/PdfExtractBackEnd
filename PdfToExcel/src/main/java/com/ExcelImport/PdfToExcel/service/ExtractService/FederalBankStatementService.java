@@ -16,10 +16,10 @@ import java.util.List;
 @Service
 public class FederalBankStatementService {
 
-    public List<List<String>> extractTableFromPdf(byte[] pdfBytes) throws Exception {
+    public List<List<String>> extractTableFromPdf(byte[] pdfBytes,String password) throws Exception {
         List<List<String>> tableData = new ArrayList<>();
 
-        try (PDDocument pdfDocument = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+        try (PDDocument pdfDocument = PDDocument.load(new ByteArrayInputStream(pdfBytes),password)) {
             ObjectExtractor extractor = new ObjectExtractor(pdfDocument);
             SpreadsheetExtractionAlgorithm sea = new SpreadsheetExtractionAlgorithm();
 

@@ -23,10 +23,10 @@ public class StateBankStatementService {
     /**
      * Extract raw table data from PDF using Tabula
      */
-    public List<List<String>> extractTableFromPdf(byte[] pdfBytes) throws Exception {
+    public List<List<String>> extractTableFromPdf(byte[] pdfBytes,String password) throws Exception {
         List<List<String>> tableData = new ArrayList<>();
 
-        PDDocument pdfDocument = PDDocument.load(new ByteArrayInputStream(pdfBytes));
+        PDDocument pdfDocument = PDDocument.load(new ByteArrayInputStream(pdfBytes),password);
         ObjectExtractor extractor = new ObjectExtractor(pdfDocument);
         SpreadsheetExtractionAlgorithm sea = new SpreadsheetExtractionAlgorithm();
 
@@ -75,6 +75,11 @@ public class StateBankStatementService {
 
             // ✅ Skip header or invalid rows
             if (row.get(0).toLowerCase().contains("txn") || row.get(0).toLowerCase().contains("date")) continue;
+
+            // 🚫 Skip "TOTAL" rows
+            if (isCloseRow(row)) {
+                continue;
+            }
 
             StateBankTransactionDTO dto = new StateBankTransactionDTO();
 
@@ -143,4 +148,21 @@ public class StateBankStatementService {
         }
 
     }
+
+    /**
+     * 🚫 Skip rows containing "TOTAL"
+     */
+    private boolean isCloseRow(List<String> row) {
+        if (row == null || row.isEmpty()) {
+            return false;
+        }
+        for (String cell : row) {
+            if (cell != null && cell.trim().equalsIgnoreCase("closing balance")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+
 }

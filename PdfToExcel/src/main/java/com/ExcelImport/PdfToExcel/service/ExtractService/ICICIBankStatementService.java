@@ -7,6 +7,11 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.stereotype.Service;
+import technology.tabula.ObjectExtractor;
+import technology.tabula.Page;
+import technology.tabula.RectangularTextContainer;
+import technology.tabula.Table;
+import technology.tabula.extractors.SpreadsheetExtractionAlgorithm;
 
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -15,170 +20,166 @@ import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Service
 public class ICICIBankStatementService {
 
-    public List<ICICIBankTransactionDTO> extractTransaction(String ocrText) {
+    public List<ICICIBankTransactionDTO> extractUsingTabula(byte[] pdfBytes) {
         List<ICICIBankTransactionDTO> transactions = new ArrayList<>();
-        List<List<String>> allTransactionAmounts = new ArrayList<>();
 
-        // 🧹 Remove ICICI Bank disclaimers and unwanted text blocks before processing
-        ocrText = ocrText
-                .replaceAll("(?is)ACCOUNT\\s+TYPE\\s+ACCOUNT\\s+NUMBER.*?This\\s+is\\s+an\\s+authenticated\\s+intimation/statement\\.", "")
-                .replaceAll("(?is)Savings\\s+X{4,}.*?This\\s+is\\s+a\\s+system\\s+generated\\s+statement\\.", "")
-                .replaceAll("(?is)Pradhan\\s+Mantri\\s+Jan\\s+Dhan\\s+Yojana.*?www\\.icicibank\\.com.*?(?=\\d{2}-\\d{2}-\\d{4}|$)", "")
-                .replaceAll("(?is)Registered\\s+Office:.*?(?=\\d{2}-\\d{2}-\\d{4}|$)", "")
-                .replaceAll("(?is)Do\\s+not\\s+fall\\s+prey\\s+to\\s+fictitious\\s+offers.*?(?=\\d{2}-\\d{2}-\\d{4}|$)", "")
-                .replaceAll("(?is)PMJJBY\\s+Insurance.*?(?=\\d{2}-\\d{2}-\\d{4}|$)", "")
-                .replaceAll("(?is)DICGC.*?(?=\\d{2}-\\d{2}-\\d{4}|$)", "")
-                .replaceAll("(?is)Registration\\s+No\\..*?(?=\\d{2}-\\d{2}-\\d{4}|$)", "")
-                .replaceAll("(?is)CIN\\s*[:].*?(?=\\d{2}-\\d{2}-\\d{4}|$)", "")
-                .replaceAll("(?is)Page\\s+\\d+\\s+of\\s+\\d+.*?(?=\\d{2}-\\d{2}-\\d{4}|$)", "")
-                .replaceAll("(?is)https://www\\.icicibank\\.com.*?(?=\\d{2}-\\d{2}-\\d{4}|$)", "");
+        Pattern datePattern = Pattern.compile("^\\d{2}-\\d{2}-\\d{4}$");
+        Pattern maybeNumeric = Pattern.compile(".*[0-9].*");
+        Pattern balancePattern = Pattern.compile("^-?\\s*[0-9,]+(?:\\.\\d{1,2})?\\s*(Cr|DR|Dr|cr|dr)?$");
 
-        String[] lines = ocrText.split("\\r?\\n");
-        ICICIBankTransactionDTO currentTx = null;
-        StringBuilder descriptionBuilder = new StringBuilder();
+        try (PDDocument pdfDocument = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
+            ObjectExtractor extractor = new ObjectExtractor(pdfDocument);
+            SpreadsheetExtractionAlgorithm sea = new SpreadsheetExtractionAlgorithm();
 
-        for (String line : lines) {
-            line = line.trim();
-            if (line.isEmpty()) continue;
+            for (int page = 1; page <= pdfDocument.getNumberOfPages(); page++) {
+                Page pdfPage = extractor.extract(page);
+                List<Table> tables = sea.extract(pdfPage);
 
-            // Clean OCR artifacts
-            line = line.replace("|", " ")
-                    .replace("=", " ")
-                    .replace("@", "")
-                    .replaceAll("\\s+", " ")
-                    .trim();
+                for (Table table : tables) {
+                    for (List<RectangularTextContainer> row : table.getRows()) {
 
-            // ⛔ Skip unwanted footer/header lines
-            if (line.matches("(?i).*Total:.*") ||
-                    line.matches("(?i).*Statement of Transactions.*") ||
-                    line.matches("(?i).*Account Related Other Information.*") ||
-                    line.matches("(?i).*Savings\\s+X{4,}.*") ||
-                    line.matches("(?i).*This is a system generated statement.*") ||
-                    line.matches("(?i).*Pradhan Mantri Jan Dhan Yojana.*") ||
-                    line.matches("(?i).*Do not fall prey to fictitious offers.*") ||
-                    line.matches("(?i).*Bank’s Code of Commitment.*") ||
-                    line.matches("(?i).*Registered Office: ICICI Bank Tower.*") ||
-                    line.matches("(?i).*Customers are requested to immediately notify.*") ||
-                    line.matches("(?i).*https://www.icicibank\\.com.*") ||
-                    line.matches("(?i).*CIN\\s*:.*") ||
-                    line.matches("(?i).*Page\\s+\\d+\\s+of\\s+\\d+.*")) {
-                continue;
-            }
+                        List<String> cells = row.stream()
+                                .map(cell -> cell.getText().trim())
+                                .filter(s -> !s.isEmpty())
+                                .collect(Collectors.toList());
 
-            // Detect start of new transaction (date pattern)
-            if (line.matches("^\\d{2}-\\d{2}-\\d{4}.*")) {
-                // Save previous transaction if exists
-                if (currentTx != null) {
-                    String desc = descriptionBuilder.toString().trim();
-                    desc = desc.replaceAll(
-                            "(?is)ACCOUNT\\s+TYPE\\s+ACCOUNT\\s+NUMBER.*?This\\s+is\\s+an\\s+authenticated\\s+intimation/statement\\.",
-                            ""
-                    ).trim(); // 🧹 clean unwanted content from description
-                    currentTx.setDescription(desc);
-                    transactions.add(currentTx);
-                }
+                        if (cells.isEmpty()) continue;
 
-                currentTx = new ICICIBankTransactionDTO();
-                descriptionBuilder = new StringBuilder();
-                List<String> amounts = new ArrayList<>();
+                        String first = cells.get(0);
+                        if (!datePattern.matcher(first).find()) continue;
 
-                String[] parts = line.split("\\s+");
-                int idx = 0;
-
-                try {
-                    // Transaction date
-                    currentTx.setTransactionDate(parts[idx]);
-                    idx++;
-
-                    // Skip junk symbols
-                    while (idx < parts.length && (parts[idx].equals("=") || parts[idx].equals("@"))) {
-                        idx++;
-                    }
-
-                    // Extract description and numeric values
-                    for (; idx < parts.length; idx++) {
-                        String token = parts[idx].replace(",", "").replace(")", "");
-                        if (token.matches("\\d+(\\.\\d{1,2})?")) {
-                            amounts.add(token);
-                        } else {
-                            descriptionBuilder.append(parts[idx]).append(" ");
+                        // find balance
+                        int balanceIdx = -1;
+                        for (int i = cells.size() - 1; i >= 0; i--) {
+                            String c = cells.get(i).replaceAll("\\s+", "");
+                            if (balancePattern.matcher(c).matches()) {
+                                balanceIdx = i;
+                                break;
+                            }
                         }
+                        if (balanceIdx == -1) balanceIdx = cells.size() - 1;
+                        String balance = cells.get(balanceIdx);
+
+                        // ✅ Detect cheque number (3–6 digits, short numeric cell)
+                        String chequeNo = null;
+                        int chequeIdx = -1;
+                        for (int i = 1; i < balanceIdx; i++) {
+                            String val = cells.get(i).replaceAll(",", "").trim();
+                            if (val.matches("^\\d{3,6}$")) {
+                                chequeNo = val;
+                                chequeIdx = i;
+                                break;
+                            }
+                        }
+
+                        // ✅ numeric-like cells (amount columns), skip cheque number column
+                        List<Integer> numericIdxs = new ArrayList<>();
+                        for (int i = 2; i < balanceIdx; i++) {
+                            if (i == chequeIdx) continue; // skip cheque no
+                            if (maybeNumeric.matcher(cells.get(i)).find()) {
+                                numericIdxs.add(i);
+                            }
+                        }
+
+                        List<String> amountCells = numericIdxs.stream()
+                                .map(cells::get)
+                                .collect(Collectors.toList());
+
+                        double withdrawals = 0.0, deposits = 0.0, autosweep = 0.0, reverseSweep = 0.0;
+
+                        // helper for numeric parsing
+                        java.util.function.Function<String, Double> toNum = (s) -> {
+                            if (s == null) return 0.0;
+                            String cleaned = s.replaceAll("[^0-9.\\-]", "");
+                            if (cleaned.isBlank()) return 0.0;
+                            try {
+                                return Double.parseDouble(cleaned);
+                            } catch (Exception ex) {
+                                return 0.0;
+                            }
+                        };
+
+                        // align from right: reverseSweep, autosweep, deposits, withdrawals
+                        for (int i = 0; i < amountCells.size(); i++) {
+                            int fromRightIndex = amountCells.size() - 1 - i;
+                            String val = amountCells.get(fromRightIndex);
+                            double num = toNum.apply(val);
+
+                            if (i == 0) reverseSweep = num;
+                            else if (i == 1) autosweep = num;
+                            else if (i == 2) deposits = num;
+                            else if (i == 3) withdrawals = num;
+                        }
+
+                        // ✅ description — everything between date and first numeric or cheque number
+                        int descEndIndex = 1;
+                        if (!numericIdxs.isEmpty()) {
+                            descEndIndex = Math.min(numericIdxs.get(0), balanceIdx);
+                        } else if (chequeIdx > 0) {
+                            descEndIndex = Math.min(chequeIdx, balanceIdx);
+                        }
+
+                        StringBuilder desc = new StringBuilder();
+                        for (int i = 1; i < descEndIndex; i++) {
+                            if (i < cells.size()) {
+                                if (desc.length() > 0) desc.append(" ");
+                                desc.append(cells.get(i));
+                            }
+                        }
+                        String description = desc.length() > 0 ? desc.toString().trim() : (cells.size() > 1 ? cells.get(1) : "-");
+
+                        // combine autosweep into debit, reverseSweep into credit
+                        double debit = withdrawals + autosweep;
+                        double credit = deposits + reverseSweep;
+
+                        ICICIBankTransactionDTO tx = new ICICIBankTransactionDTO();
+                        tx.setTransactionDate(first);
+                        tx.setDescription(description);
+                        tx.setChequeNo(chequeNo);
+                        tx.setDebit(debit > 0 ? String.format("%.2f", debit) : "-");
+                        tx.setCredit(credit > 0 ? String.format("%.2f", credit) : "-");
+                        tx.setBalance(balance);
+
+                        if (debit > 0)
+                            tx.setVoucherName("Payment");
+                        else if (credit > 0)
+                            tx.setVoucherName("Receipt");
+                        else
+                            tx.setVoucherName("-");
+
+                        transactions.add(tx);
                     }
-
-                } catch (Exception e) {
-                    System.out.println("Error parsing line: " + line);
-                }
-
-                allTransactionAmounts.add(amounts);
-            } else {
-                // continuation of description
-                descriptionBuilder.append(line).append(" ");
-            }
-        }
-
-        // Add last transaction
-        if (currentTx != null) {
-            String desc = descriptionBuilder.toString().trim();
-            desc = desc.replaceAll(
-                    "(?is)ACCOUNT\\s+TYPE\\s+ACCOUNT\\s+NUMBER.*?This\\s+is\\s+an\\s+authenticated\\s+intimation/statement\\.",
-                    ""
-            ).trim();
-            currentTx.setDescription(desc);
-            transactions.add(currentTx);
-        }
-
-        // Assign debit/credit/balance logic
-        String previousBalance = null;
-        for (int i = 0; i < transactions.size(); i++) {
-            ICICIBankTransactionDTO tx = transactions.get(i);
-            List<String> amounts = (i < allTransactionAmounts.size()) ? allTransactionAmounts.get(i) : new ArrayList<>();
-
-            tx.setDebit("-");
-            tx.setCredit("-");
-            tx.setBalance("-");
-
-            if (!amounts.isEmpty()) {
-                String balance = amounts.get(amounts.size() - 1);
-                tx.setBalance(balance);
-
-                try {
-                    double curr = Double.parseDouble(balance.replaceAll(",", ""));
-                    if (i == 0 && amounts.size() >= 2) {
-                        tx.setCredit(amounts.get(0));
-                    } else if (previousBalance != null) {
-                        double prev = Double.parseDouble(previousBalance.replaceAll(",", ""));
-                        double diff = curr - prev;
-                        if (diff > 0) tx.setCredit(String.format("%.2f", diff));
-                        else if (diff < 0) tx.setDebit(String.format("%.2f", Math.abs(diff)));
-                    }
-                    previousBalance = balance;
-                } catch (NumberFormatException e) {
-                    System.out.println("Invalid balance value for: " + tx.getDescription());
                 }
             }
 
-            // Voucher type logic
-            if (!"-".equals(tx.getCredit())) tx.setVoucherName("Receipt");
-            else if (!"-".equals(tx.getDebit())) tx.setVoucherName("Payment");
-            else tx.setVoucherName("-");
+        } catch (Exception e) {
+            System.out.println("⚠️ Tabula extraction error: " + e.getMessage());
         }
 
         return transactions;
     }
 
 
-public String extractTextFromPdf(byte[] pdfBytes) throws Exception {
-            try (PDDocument document = PDDocument.load(new ByteArrayInputStream(pdfBytes))) {
-           PDFTextStripper pdfStripper = new PDFTextStripper();
-            pdfStripper.setSortByPosition(true); // Important for table data
-            return pdfStripper.getText(document);
+    private double parseAmount(String amountText) {
+        if (amountText == null || amountText.trim().isEmpty()) return 0.0;
+        try {
+            return Double.parseDouble(amountText.replaceAll("[^0-9.]", ""));
+        } catch (NumberFormatException e) {
+            return 0.0;
         }
     }
+
+    private String cleanAmount(String value) {
+        if (value == null || value.trim().isEmpty() || value.equals("-")) return "-";
+        return value.replace(",", "").replaceAll("[^0-9.]", "").trim();
+    }
 }
+
 
 
 

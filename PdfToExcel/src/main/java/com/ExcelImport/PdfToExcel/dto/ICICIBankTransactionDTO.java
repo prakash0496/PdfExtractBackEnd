@@ -20,5 +20,7 @@ public class ICICIBankTransactionDTO {
     private String branchCode;
     private String voucherName;
     private String ledgerName;
+    private String autoSweep;
+    private String reverseSweep;
     private List<String> amounts;
 }
