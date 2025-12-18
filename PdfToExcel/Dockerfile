@@ -10,7 +10,7 @@ COPY .mvn .mvn
 COPY pom.xml .
 
 # Copy source code
-COPY src src
+COPY --from=build /PdfToExcel/target/*.jar PdfExtractBackEnd-0.0.1-SNAPSHOT.jar
 
 # Make Maven wrapper executable
 RUN chmod +x mvnw

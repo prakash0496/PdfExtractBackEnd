@@ -17,9 +17,11 @@ import technology.tabula.extractors.SpreadsheetExtractionAlgorithm;
 
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -27,8 +29,6 @@ import java.util.stream.Collectors;
 @Log4j2
 @Service
 public class TextBasedExtractorService {
-
-
 
     //ICICI Saving Account Extraction
 
@@ -430,137 +430,129 @@ public class TextBasedExtractorService {
     // Indian Bank Transaction
     // =======================
 
+//    // ✅ Read PDF text
+//    public String extractTextFromPDF() throws IOException {
+//        try (PDDocument document = PDDocument.load(file)) {
+//            PDFTextStripper stripper = new PDFTextStripper();
+//            return stripper.getText(document);
+//        }
+//    }
 
-    public List<TransactionDTO> indianBankTransactions(String text) {
+    // ✅ Extract transactions
+    public List<TransactionDTO> extractTransactions(String text) {
         List<TransactionDTO> transactions = new ArrayList<>();
-        if (text == null || text.trim().isEmpty()) {
-            log.warn("⚠️ PDF text is empty.  No transactions to parse.");
-            return transactions;
-        }
+        if (text == null || text.trim().isEmpty()) return transactions;
 
+        // Split by lines
         String[] lines = text.split("\\r?\\n");
+        StringBuilder current = new StringBuilder();
+        Pattern datePattern = Pattern.compile("^(\\d{1,2}\\s+[A-Za-z]{3,9}\\s+\\d{4})");
 
-        // ✅ Unified date pattern – supports both numeric and month-name formats
-        Pattern datePattern = Pattern.compile(
-                "^(\\d{1,2}[-/\\s]\\d{1,2}[-/\\s]\\d{2,4}|\\d{1,2}\\s*[A-Za-z]{3,9}\\s*\\d{4})"
-        );
-
-        StringBuilder currentBlock = new StringBuilder();
-        log.info("📄 Starting universal transaction  parsing... Total lines: {}", lines.length);
-
-        for (String rawLine : lines) {
-            String line = rawLine.trim();
+        for (String raw : lines) {
+            String line = raw.trim();
             if (line.isEmpty()) continue;
 
             String lower = line.toLowerCase();
-
-            // 🧹 Skip headers, footers, disclaimers, and summaries
-            if (lower.matches(".*(opening balance|closing balance|account summary|page no|statement|total|grand total|deposits|withdrawals).*")
-                    || lower.contains("this is a system")
-                    || lower.contains("regd address")
-                    || lower.contains("summary of account")
-                    || lower.contains("page ")
-                    || lower.contains("indian bank")
-                    || lower.contains("account details")
-                    || lower.contains("thank you")) {
+            if (lower.matches(".*(account activity|opening balance|closing balance|account summary|total|page|thank you|statement).*"))
                 continue;
-            }
 
             Matcher matcher = datePattern.matcher(line);
             if (matcher.find()) {
-                // 🆕 New transaction starts
-                if (currentBlock.length() > 0) {
-                    TransactionDTO dto = parseBlockToDto(currentBlock.toString());
+                if (current.length() > 0) {
+                    TransactionDTO dto = parseBlockToDto(current.toString().trim());
                     if (dto != null) transactions.add(dto);
-                    currentBlock.setLength(0);
+                    current.setLength(0);
                 }
-                currentBlock.append(line);
-            } else if (currentBlock.length() > 0) {
-                // continuation (multi-line description)
-                currentBlock.append(" ").append(line);
+                current.append(line);
+            } else if (current.length() > 0) {
+                current.append(" ").append(line);
             }
         }
 
-        // 🏁 Final block
-        if (currentBlock.length() > 0) {
-            TransactionDTO dto = parseBlockToDto(currentBlock.toString());
+        if (current.length() > 0) {
+            TransactionDTO dto = parseBlockToDto(current.toString().trim());
             if (dto != null) transactions.add(dto);
         }
 
-        log.info("🏁 Completed parsing. Total  extracted transactions: {}", transactions.size());
         return transactions;
     }
 
-
     private TransactionDTO parseBlockToDto(String block) {
-        if (block == null || block.trim().isEmpty()) return null;
         TransactionDTO dto = new TransactionDTO();
 
-        // 1️⃣ Detect any valid date format (numeric or textual)
-        Matcher dateMatcher = Pattern.compile("(\\d{1,2}[-/\\s]\\d{1,2}[-/\\s]\\d{2,4}|\\d{1,2}\\s*[A-Za-z]{3,9}\\s*\\d{4})").matcher(block);
+        // Remove footer noise like "Ending Balance" or "Indian Bank"
+        block = block.replaceAll("(?i)ending balance.*", "")
+                .replaceAll("(?i)indian bank.*", "")
+                .trim();
+
+        // 1️⃣ Extract Date
+        Matcher dateMatcher = Pattern.compile("(\\d{1,2}\\s+[A-Za-z]{3,9}\\s+\\d{4})").matcher(block);
         if (dateMatcher.find()) {
             dto.setTransactionDate(dateMatcher.group(1));
-            block = block.replaceFirst(Pattern.quote(dateMatcher.group(1)), " ");
+            block = block.replaceFirst(Pattern.quote(dateMatcher.group(1)), "").trim();
         }
 
-
-        // 🧠 Step 1: Extract only last ~120 chars
-        String tailSection = block.length() > 120 ? block.substring(block.length() - 120) : block;
-
-        // 🧠 Step 2: Match currency-like values
-        Pattern amountPattern = Pattern.compile("(?:INR\\s*)?\\d{1,3}(?:,\\d{2,3})*(?:\\.\\d{1,2})?");
+        // 2️⃣ Extract all INR values
+        Matcher amtMatcher = Pattern.compile("(-?\\s*INR\\s*\\d{1,3}(?:,\\d{2,3})*(?:\\.\\d{1,2})?)").matcher(block);
         List<String> amounts = new ArrayList<>();
-        Matcher amtMatcher = amountPattern.matcher(tailSection);
-        while (amtMatcher.find()) {
-            String amt = amtMatcher.group().trim();
-            String digits = amt.replaceAll("[^0-9]", "");
-            if (digits.length() > 7) continue;
-            if (amt.contains(".") || amt.contains(",") || amt.toUpperCase().contains("INR")) {
-                amt = amt.replace("INR", "").trim();
-                if (!amt.isEmpty()) amounts.add(amt);
-            }
-        }
+        while (amtMatcher.find()) amounts.add(amtMatcher.group(1).trim());
 
-// 🧮 Classify amounts using simple rule
-        String debit = "-", credit = "-", balance = "-";
-        boolean hasDash = tailSection.contains(" - ");
-        if (amounts.size() == 2 && hasDash) {
-            debit = amounts.get(0);
-            balance = amounts.get(1);
+        String debit = "0.00", credit = "0.00", balance = "0.00";
+
+        if (amounts.size() == 2) {
+            String first = amounts.get(0);
+            String second = amounts.get(1);
+
+            // 🧠 Case 1: "INR 32.00  - INR 1,190.65" → Debit
+            if (block.matches(".*INR\\s*\\d.*-\\s*INR\\s*\\d.*")) {
+                debit = cleanAmount(first);
+                balance = cleanAmount(second);
+            }
+            // 🧠 Case 2: "- INR 24.00 INR 1,214.65" → Credit
+            else if (block.matches(".*-\\s*INR\\s*\\d.*INR\\s*\\d.*")) {
+                credit = cleanAmount(first);
+                balance = cleanAmount(second);
+            }
+            // 🧠 Case 3: “CREDIT INTEREST” keyword → Credit
+            else if (block.toUpperCase().contains("CREDIT")) {
+                credit = cleanAmount(first);
+                balance = cleanAmount(second);
+            }
+            // 🧠 Fallback — assume Debit
+            else {
+                debit = cleanAmount(first);
+                balance = cleanAmount(second);
+            }
         } else if (amounts.size() == 3) {
-            debit = amounts.get(0);
-            credit = amounts.get(1);
-            balance = amounts.get(2);
-        } else if (amounts.size() == 2 && !hasDash) {
-            credit = amounts.get(0);
-            balance = amounts.get(1);
+            // Format: Debit, Credit, Balance
+            debit = cleanAmount(amounts.get(0));
+            credit = cleanAmount(amounts.get(1));
+            balance = cleanAmount(amounts.get(2));
         } else if (amounts.size() == 1) {
-            balance = amounts.get(0);
+            balance = cleanAmount(amounts.get(0));
         }
 
         dto.setDebit(debit);
         dto.setCredit(credit);
         dto.setBalance(balance);
 
-// 🧹 Clean trailing amount area from description
-        String cleaned = block.replaceAll(
-                "(INR\\s*-?\\d{1,3}(?:,\\d{2,3})*(?:\\.\\d{1,2})?(\\s*-\\s*)?){1,3}\\s*$",
-                ""
-        ).trim();
+        // 3️⃣ Clean up description
+        String desc = block.replaceAll("(-?\\s*INR\\s*\\d{1,3}(?:,\\d{2,3})*(?:\\.\\d{1,2})?)+", "")
+                .replaceAll("\\s{2,}", " ")
+                .trim();
+        dto.setDescription(desc);
 
-        dto.setDescription(cleaned.isEmpty() ? "-" : cleaned);
-
-
-
-        // 5️⃣ Voucher type detection
-        if (!credit.equals("-") && !credit.equals("0.00"))
-            dto.setVoucherType("Receipt");
-        else if (!debit.equals("-") && !debit.equals("0.00"))
-            dto.setVoucherType("Payment");
-        else
-            dto.setVoucherType("-");
+        // 4️⃣ Voucher type
+        if (!credit.equals("0.00")) dto.setVoucherType("Receipt");
+        else if (!debit.equals("0.00")) dto.setVoucherType("Payment");
+        else dto.setVoucherType("-");
 
         return dto;
+    }
+
+    private String cleanAmount(String amt) {
+        if (amt == null) return "0.00";
+        return amt.replaceAll("[^0-9.]", "").trim();
     }
 
 

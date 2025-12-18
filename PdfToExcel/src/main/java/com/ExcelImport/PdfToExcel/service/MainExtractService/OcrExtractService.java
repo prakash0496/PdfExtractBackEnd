@@ -247,6 +247,9 @@ public class OcrExtractService {
         return dto;
     }
 
+    // canara Bank Extraction
+
+
 
     // KVB Transaction
 

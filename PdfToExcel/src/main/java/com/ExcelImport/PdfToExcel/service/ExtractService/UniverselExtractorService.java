@@ -8,13 +8,9 @@ import com.ExcelImport.PdfToExcel.service.MainExtractService.OcrExtractService;
 import com.ExcelImport.PdfToExcel.service.MainExtractService.TextBasedExtractorService;
 import com.ExcelImport.PdfToExcel.service.MainExtractService.TabulaExtractorService;
 import lombok.extern.log4j.Log4j2;
-import net.sourceforge.tess4j.ITesseract;
-import net.sourceforge.tess4j.Tesseract;
 import org.apache.pdfbox.io.MemoryUsageSetting;
 import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.pdfbox.text.PDFTextStripper;
-import org.apache.poi.ss.formula.atp.Switch;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -24,7 +20,7 @@ import technology.tabula.RectangularTextContainer;
 import technology.tabula.extractors.SpreadsheetExtractionAlgorithm;
 import technology.tabula.Table;
 
-import java.awt.image.BufferedImage;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.*;
@@ -65,7 +61,7 @@ public class UniverselExtractorService {
         // ===========================================================
         assert pdfBytes != null;
         boolean isDigital = isDigitalPdf(pdfBytes.getBytes(),password);
-        boolean isTable = hasTransactionTableLayout(pdfBytes.getBytes(),password);
+        boolean isTable   = hasTransactionTableLayout(pdfBytes.getBytes(),password);
 
         log.info("📄 PDF Type Detected → {}", isDigital ? "Digital Text-Based" : "Possibly Scanned (Image-based)");
         log.info("📊 Table Structure Detected → {}", isTable ? "Table-Based" : "No Table Structure");
@@ -97,9 +93,9 @@ public class UniverselExtractorService {
                 case "ICICI":
                     transactions = tabulaExtractorService.extractUsingTabula(pdfBytes.getBytes());
                     break;
-//                case "INDUSLND":
-//                    transactions = tabulaExtractorService.extractUsingTabula(pdfBytes.getBytes());
-//                    break;
+                case "INDUSLND":
+                    transactions = tabulaExtractorService.extractUsingTabula(pdfBytes.getBytes());
+                    break;
                 default:
                     throw new IllegalArgumentException("❌ Unsupported bank: " + bank);
             }
@@ -115,14 +111,14 @@ public class UniverselExtractorService {
         // 3️⃣ If Digital Text-Based → Use Text Extraction
         // ===========================================================
         if (isDigital && !isTable) {
-            log.info("📜 Detected digital text-based PDF — using text extraction...");
+            log.info("📜 Detected digital text-based PDF — CANARA using text extraction...");
             String textData = extractTextFromPdf(pdfBytes.getBytes(),password);
             switch (bank.toUpperCase()){
                 case "CANARA":
                     transactions = textBasedExtractorService.parseCanaraBankTransactions(textData);
                     break;
                 case "INDIAN_BANK":
-                    transactions = textBasedExtractorService.indianBankTransactions(textData);
+                    transactions = textBasedExtractorService.extractTransactions(textData);
                     break;
                 case "ICICI":
                     if ("SAVING".equalsIgnoreCase(accountType)) {
@@ -132,6 +128,10 @@ public class UniverselExtractorService {
                         // 🔵 Current account extraction
                         transactions = textBasedExtractorService.extractUsingTabula(pdfBytes.getBytes());
                     }
+                    break;
+                case "INDUSLND":
+                    String ocrText = ocrExtractService.extractTextFromScannedPdf(pdfBytes.getBytes(),password);
+                    transactions = ocrExtractService.extractTransactions(ocrText);
                     break;
 //                default:
 //                    transactions = textBasedExtractorService.parseUniversalTransactions(textData);
@@ -151,11 +151,16 @@ public class UniverselExtractorService {
         String ocrData = ocrExtractService.extractTextFromScannedPdf(pdfBytes.getBytes(),password);
         switch (bank.toUpperCase()) {
             case "KVB":
-            transactions = ocrExtractService.extractTransactions(ocrData);
-            break;
+                  transactions = ocrExtractService.extractTransactions(ocrData);
+                  break;
             case "INDUSLND":
-                transactions = ocrExtractService.extractTransactions(pdfBytes.getBytes());
-                break;
+                  transactions = ocrExtractService.extractTransactions(pdfBytes.getBytes());
+                  break;
+//            case "CANARA":
+////                String textData = extractTextFromPdf(pdfBytes.getBytes(),password);
+//                transactions = textBasedExtractorService.extractCanaraBankTransaction(ocrData);
+//                break;
+
 
             default:
                 transactions = ocrExtractService.ocrBasedTransactions(ocrData);
@@ -555,9 +560,4 @@ private boolean hasTransactionTableLayout(byte[] pdfBytes,String password) {
         dto.setDescription(cleanedBlock.isEmpty() ? "-" : cleanedBlock);
         return dto;
     }
-
-
-
-
-
 }

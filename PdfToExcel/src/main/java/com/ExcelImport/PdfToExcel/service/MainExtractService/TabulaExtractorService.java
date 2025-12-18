@@ -17,6 +17,7 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Log4j2
 @Service
@@ -119,23 +120,25 @@ public class TabulaExtractorService {
         for (List<String> row : tableRows) {
             if (row == null || row.isEmpty()) continue;
 
-            // ✅ Clean up each cell properly
+            // 🧹 Clean each cell
             for (int i = 0; i < row.size(); i++) {
                 String cell = row.get(i);
                 row.set(i, (cell == null ? "" : cell.replaceAll("[\\r\\n]", "").trim()));
             }
 
-            // ✅ Skip header or invalid rows
+            // 🧾 Skip fully empty rows (all blank or "-")
+            boolean allEmpty = row.stream()
+                    .allMatch(cell -> cell == null || cell.trim().isEmpty() || cell.trim().equals("-"));
+            if (allEmpty) continue;
+
+            // 🧾 Skip header or invalid rows
             if (row.get(0).toLowerCase().contains("txn") || row.get(0).toLowerCase().contains("date")) continue;
 
             TransactionDTO dto = new TransactionDTO();
 
-            // ✅ Detect if Branch Code column exists
-            // Format A: TxnDate, ValueDate, Description, RefNo/ChequeNo, BranchCode, Debit, Credit, Balance
-            // Format B: TxnDate, ValueDate, Description, RefNo/ChequeNo, Debit, Credit, Balance
             boolean hasBranchCode = row.size() >= 8;
 
-            dto.setTransactionDate(formatTallyDate(getValue(row, 0)));  // 🟩 formatted for Tally
+            dto.setTransactionDate(formatTallyDate(getValue(row, 0)));
             dto.setDescription(getValue(row, 2));
 
             if (hasBranchCode) {
@@ -148,10 +151,21 @@ public class TabulaExtractorService {
                 dto.setBalance(cleanAmount(getValue(row, 6)));
             }
 
-            // ✅ Voucher logic
+            // 💰 Voucher type logic
             if (!dto.getCredit().equals("-")) dto.setVoucherType("Receipt");
             else if (!dto.getDebit().equals("-")) dto.setVoucherType("Payment");
             else dto.setVoucherType("-");
+
+            // 🚫 Skip DTOs that are all "-"
+            boolean allDash = Stream.of(
+                    dto.getTransactionDate(),
+                    dto.getDescription(),
+                    dto.getDebit(),
+                    dto.getCredit(),
+                    dto.getBalance()
+            ).allMatch(val -> val == null || val.trim().equals("-") || val.trim().isEmpty());
+
+            if (allDash) continue;
 
             transactions.add(dto);
         }
@@ -185,11 +199,10 @@ public class TabulaExtractorService {
             SimpleDateFormat tallyDate = new SimpleDateFormat("dd-MM-yyyy");
 
             Date parsedDate = inputDate.parse(dateStr);
-            return tallyDate.format(parsedDate);  // ✅ e.g., "20240401"
+            return tallyDate.format(parsedDate);
         } catch (ParseException e) {
             return "-";  // Graceful fallback
         }
-
     }
 
     //City_Union Bank Extraction
