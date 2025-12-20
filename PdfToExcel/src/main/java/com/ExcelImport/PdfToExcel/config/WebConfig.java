@@ -12,9 +12,10 @@ public class WebConfig {
         return new WebMvcConfigurer() {
             @Override
             public void addCorsMappings(CorsRegistry registry) {
-                registry.addMapping("/api/bank-statement")
-                        .allowedOrigins("http://localhost:3000", "http://127.0.0.1:5500")
-                        .allowedMethods("POST", "GET");
+                registry.addMapping("/api/pdf")
+                        .allowedOrigins("https://pdfextractionfront.netlify.app/") //http://localhost:3000", "http://127.0.0.1:5500")
+                        .allowedHeaders("*")
+                        .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS");
             }
         };
     }
