@@ -32,7 +32,7 @@ public class TallyConversionService {
         SimpleDateFormat tallyDate = new SimpleDateFormat("yyyyMMdd");
 
         for (Map<String, Object> tx : transactions) {
-            String date = (String) tx.get("date");
+            String date = (String) tx.get("transactionDate");
             String narration = (String) tx.get("description");
             String debit = (String) tx.get("debit");
             String credit = (String) tx.get("credit");
@@ -96,11 +96,22 @@ public class TallyConversionService {
     }
 
     private String simpleTallyDate(String dateStr) {
-        if (dateStr == null || dateStr.trim().isEmpty()) {
-            return "-";
+        try {
+            if (dateStr == null || dateStr.trim().isEmpty()) {
+                return "";
+            }
+
+            SimpleDateFormat inputFormat =
+                    new SimpleDateFormat("dd-MM-yyyy HH:mm:ss");
+
+            SimpleDateFormat tallyFormat =
+                    new SimpleDateFormat("yyyyMMdd");
+
+            return tallyFormat.format(inputFormat.parse(dateStr));
+        } catch (ParseException e) {
+            return "";
         }
-        // Remove all non-digit characters
-        return dateStr.replaceAll("\\D", "");
     }
+
 
 }
