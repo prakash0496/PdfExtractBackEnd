@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 
@@ -96,22 +97,33 @@ public class TallyConversionService {
     }
 
     private String simpleTallyDate(String dateStr) {
-        try {
-            if (dateStr == null || dateStr.trim().isEmpty()) {
-                return "";
-            }
-
-            SimpleDateFormat inputFormat =
-                    new SimpleDateFormat("dd-MM-yyyy HH:mm:ss");
-
-            SimpleDateFormat tallyFormat =
-                    new SimpleDateFormat("yyyyMMdd");
-
-            return tallyFormat.format(inputFormat.parse(dateStr));
-        } catch (ParseException e) {
+        if (dateStr == null || dateStr.trim().isEmpty()) {
             return "";
         }
+
+        // Normalize new line and multiple spaces
+        dateStr = dateStr.replace("\n", " ").replaceAll("\\s+", " ").trim();
+
+        SimpleDateFormat tallyFormat = new SimpleDateFormat("yyyyMMdd");
+
+        SimpleDateFormat[] inputFormats = {
+                new SimpleDateFormat("dd-MM-yyyy HH:mm:ss"),
+                new SimpleDateFormat("dd/MM/yyyy"),
+                new SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH),
+                new SimpleDateFormat("dd-MM-yyyy")
+        };
+
+        for (SimpleDateFormat inputFormat : inputFormats) {
+            try {
+                return tallyFormat.format(inputFormat.parse(dateStr));
+            } catch (ParseException ignored) {
+            }
+        }
+
+        return "";
     }
+
+
 
 
 }

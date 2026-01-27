@@ -187,23 +187,35 @@ public class TabulaExtractorService {
     }
 
     private String formatTallyDate(String dateStr) {
-        try {
-            if (dateStr == null || dateStr.trim().isEmpty() || dateStr.equalsIgnoreCase("-")) {
-                return "-";
-            }
-
-            // Normalize separators (handles both "/" and "-")
-            dateStr = dateStr.trim().replace("-", "/");
-
-            SimpleDateFormat inputDate = new SimpleDateFormat("dd/MM/yyyy");
-            SimpleDateFormat tallyDate = new SimpleDateFormat("dd-MM-yyyy");
-
-            Date parsedDate = inputDate.parse(dateStr);
-            return tallyDate.format(parsedDate);
-        } catch (ParseException e) {
-            return "-";  // Graceful fallback
+        if (dateStr == null || dateStr.trim().isEmpty() || "-".equals(dateStr.trim())) {
+            return "-";
         }
+
+        // Normalize input (newlines, extra spaces, separators)
+        dateStr = dateStr
+                .replace("\n", " ")
+                .replace("-", "/")
+                .replaceAll("\\s+", " ")
+                .trim();
+
+        SimpleDateFormat tallyDate = new SimpleDateFormat("dd-MM-yyyy");
+
+        SimpleDateFormat[] inputFormats = {
+                new SimpleDateFormat("dd/MM/yyyy"),
+                new SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH)
+        };
+
+        for (SimpleDateFormat inputFormat : inputFormats) {
+            try {
+                Date parsedDate = inputFormat.parse(dateStr);
+                return tallyDate.format(parsedDate);
+            } catch (ParseException ignored) {
+            }
+        }
+
+        return "-"; // Graceful fallback
     }
+
 
     //City_Union Bank Extraction
 
