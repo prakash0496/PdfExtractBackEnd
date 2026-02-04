@@ -453,6 +453,12 @@ public class BankStatementController {
                     headers.setContentDisposition(ContentDisposition.attachment().filename("TallyImport_City_Union.xml").build());
                     break;
 
+                case "IDBI":
+                    List<TransactionDTO>idbiTransactionDTOS = mapper.readValue(tableDataJson, new TypeReference<List<TransactionDTO>>() {});
+                    tallyXml = tallyConversionService.generateTallyXml(tableDataJson,bank,typeBank);
+                    headers.setContentDisposition(ContentDisposition.attachment().filename("TallyImport_IDBI.xml").build());
+                    break;
+
                 default:
                     throw new IllegalArgumentException("Unsupported bank: " + bank);
             }

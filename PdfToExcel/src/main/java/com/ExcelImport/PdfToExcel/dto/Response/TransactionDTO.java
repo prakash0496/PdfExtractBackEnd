@@ -16,5 +16,6 @@ public class TransactionDTO {
     private String balance;
     private String voucherType;
     private String valueDate;
+    private String ledgerName;
 
 }

@@ -38,11 +38,16 @@ public class TallyConversionService {
             String debit = (String) tx.get("debit");
             String credit = (String) tx.get("credit");
             String voucherName = (String) tx.get("voucherType");
+            String ledgerName = (String) tx.get("ledgerName");
 
 
             boolean isCredit = credit != null && !credit.equals("-") && !credit.isEmpty();
             String amount = isCredit ? credit : debit;
             if (amount == null || amount.equals("-") || amount.isEmpty()) continue;
+            // ✅ SET DEFAULT LEDGER
+            if (ledgerName == null || ledgerName.trim().isEmpty() || ledgerName.equals("-")) {
+                ledgerName = "Suspense";
+            }
 
             amount = amount.replaceAll(",", "").trim();
             String formattedDate;
@@ -66,7 +71,7 @@ public class TallyConversionService {
 
                     // Suspense Ledger
                     .append("<ALLLEDGERENTRIES.LIST>\n")
-                    .append("<LEDGERNAME>SUSPENSE</LEDGERNAME>\n")
+                    .append("<LEDGERNAME>").append(ledgerName).append("</LEDGERNAME>\n")
                     .append("<ISDEEMEDPOSITIVE>").append(isCredit ? "No" : "Yes").append("</ISDEEMEDPOSITIVE>\n")
                     .append("<AMOUNT>").append(isCredit ? amount : "-" + amount).append("</AMOUNT>\n")
                     .append("</ALLLEDGERENTRIES.LIST>\n")

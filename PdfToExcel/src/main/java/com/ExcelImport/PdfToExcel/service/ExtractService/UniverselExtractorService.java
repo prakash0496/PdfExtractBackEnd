@@ -87,8 +87,8 @@ public class UniverselExtractorService {
                     transactions = tabulaExtractorService.cityUnionBankMapDto(rawTable);
                     break;
                 case "FEDERAL":
-                    List<List<String>> federalExtract = tabulaExtractorService.extractTableFederal(pdfBytes.getBytes(),password);
-                    transactions = tabulaExtractorService.FederalBankMapDto(federalExtract);
+                    List<List<String>> KvbExtract = tabulaExtractorService.extractTableFromPdf(pdfBytes.getBytes(),password);
+                    transactions = tabulaExtractorService.FederalBankMapDto(KvbExtract);
                     break;
                 case "ICICI":
                     transactions = tabulaExtractorService.extractUsingTabula(pdfBytes.getBytes());
@@ -96,6 +96,12 @@ public class UniverselExtractorService {
                 case "INDUSLND":
                     transactions = tabulaExtractorService.extractUsingTabula(pdfBytes.getBytes());
                     break;
+                case "IDBI":
+                    transactions= tabulaExtractorService.IdbiBankMapDto(rawTable);
+                    break;
+               /* case "KVB":
+                    transactions = tabulaExtractorService.KvbBankMapDto(rawTable);
+                    break; */
                 default:
                     throw new IllegalArgumentException("❌ Unsupported bank: " + bank);
             }

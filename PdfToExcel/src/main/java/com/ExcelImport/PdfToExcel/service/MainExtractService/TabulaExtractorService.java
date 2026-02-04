@@ -9,12 +9,14 @@ import technology.tabula.ObjectExtractor;
 import technology.tabula.Page;
 import technology.tabula.RectangularTextContainer;
 import technology.tabula.Table;
+import technology.tabula.extractors.BasicExtractionAlgorithm;
 import technology.tabula.extractors.SpreadsheetExtractionAlgorithm;
 
 import java.io.ByteArrayInputStream;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -111,6 +113,52 @@ public class TabulaExtractorService {
 
         return transactions;
     }
+
+    //IDBI Bank Extraction
+
+    public List<TransactionDTO> IdbiBankMapDto(List<List<String>> tableRows) {
+        List<TransactionDTO> transactions = new ArrayList<>();
+
+        for (List<String> row : tableRows) {
+
+            // Skip header or invalid rows
+            if (row.size() < 5 || row.get(0).toLowerCase().contains("txn") || row.get(1).toLowerCase().contains("txn date"))  continue;
+
+
+            // Clean cells
+            for (int i = 0; i < row.size(); i++) {
+                row.set(i, row.get(i).replaceAll("[\\r\\n]", "").trim());
+            }
+
+            TransactionDTO tx = new TransactionDTO();
+
+            // 🗓 Transaction and Value Dates
+            tx.setTransactionDate(row.get(1));
+
+            // 🧾 Cheque Number & Description
+            tx.setDescription(row.size() > 3 && !row.get(3).isEmpty() ? row.get(3) : "-");
+
+            // 💰 Debit / Credit / Balance
+            tx.setDebit(row.size() > 5 && !row.get(5).isEmpty() ? cleanAmount(row.get(5)) : "-");
+            tx.setCredit(row.size() > 6 && !row.get(6).isEmpty() ? cleanAmount(row.get(6)) : "-");
+            tx.setBalance(row.size() > 7 && !row.get(7).isEmpty() ? cleanAmount(row.get(7)) : "-");
+
+            // 🧾 Voucher Type Logic
+            if (tx.getCredit() != null && !tx.getCredit().equals("-") && !tx.getCredit().isEmpty()) {
+                tx.setVoucherType("Receipt");
+            } else if (tx.getDebit() != null && !tx.getDebit().equals("-") && !tx.getDebit().isEmpty()) {
+                tx.setVoucherType("Payment");
+            } else {
+                tx.setVoucherType("-");
+            }
+
+            transactions.add(tx);
+        }
+
+        return transactions;
+    }
+
+
 
     // StateBank Extraction
 
@@ -615,6 +663,7 @@ public class TabulaExtractorService {
         return transactions;
     }
 }
+
 
 
 
