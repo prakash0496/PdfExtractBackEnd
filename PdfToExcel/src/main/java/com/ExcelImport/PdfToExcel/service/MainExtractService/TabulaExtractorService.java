@@ -79,7 +79,7 @@ public class TabulaExtractorService {
         for (List<String> row : tableRows) {
 
             // Skip header or invalid rows
-            if (row.size() < 5 || row.get(0).toLowerCase().contains("txn")) continue;
+            if (row.size() < 8 || row.get(0).toLowerCase().contains("txn") || row.get(0).toLowerCase().contains("date") || row.get(0).toLowerCase().contains("opening") || row.get(2).toLowerCase().contains("b/f") || row.get(3).toLowerCase().contains("b/f") || row.get(4).toLowerCase().contains("b/f") || row.get(7).toLowerCase().contains("0.0")) continue;
 
             // Clean cells
             for (int i = 0; i < row.size(); i++) {
@@ -91,8 +91,34 @@ public class TabulaExtractorService {
             // 🗓 Transaction and Value Dates
             tx.setTransactionDate(row.get(0));
 
-            // 🧾 Cheque Number & Description
-            tx.setDescription(row.size() > 3 && !row.get(3).isEmpty() ? row.get(3) : "-");
+           // 🧾 Cheque Number & Description
+            String description = "-";
+
+            for (int i = 3; i <= 5 && i < row.size(); i++) {
+
+                String value = row.get(i);
+
+                if (value != null) {
+                    value = value.trim();
+
+                    String lower = value.toLowerCase();
+
+                    // Skip unwanted values
+                    if (!value.isEmpty()
+                            && !lower.equals("b/f")
+                            && !lower.contains("txn")
+                            && !lower.contains("chq")
+                            && !lower.contains("cheque")
+                            && !lower.contains("ref")
+                            && !value.matches("\\d+")) {   // skip pure numbers (cheque no)
+
+                        description = value;
+                        break;
+                    }
+                }
+            }
+
+            tx.setDescription(description);
 
             // 💰 Debit / Credit / Balance
             tx.setDebit(row.size() > 5 && !row.get(5).isEmpty() ? cleanAmount(row.get(5)) : "-");
@@ -117,36 +143,80 @@ public class TabulaExtractorService {
     //IDBI Bank Extraction
 
     public List<TransactionDTO> IdbiBankMapDto(List<List<String>> tableRows) {
+
         List<TransactionDTO> transactions = new ArrayList<>();
 
+        if (tableRows == null || tableRows.isEmpty()) {
+            return transactions;
+        }
+
+        // 🔍 STEP 1: Detect unwanted column index from header
+        List<String> headerRow = tableRows.get(0);
+        List<Integer> removeIndexes = new ArrayList<>();
+
+        for (int i = 0; i < headerRow.size(); i++) {
+            String header = headerRow.get(i).toLowerCase().trim();
+
+            if (header.contains("cheque no") || header.contains("ref no")) {
+                removeIndexes.add(i);
+            }
+        }
+
+        // 🔥 Remove from last index to first (very important)
+        Collections.sort(removeIndexes, Collections.reverseOrder());
+
         for (List<String> row : tableRows) {
+            for (int index : removeIndexes) {
+                if (row.size() > index) {
+                    row.remove(index);
+                }
+            }
+        }
 
-            // Skip header or invalid rows
-            if (row.size() < 5 || row.get(0).toLowerCase().contains("txn") || row.get(1).toLowerCase().contains("txn date"))  continue;
-
-
-            // Clean cells
+        // 🔄 STEP 2: Process Cleaned Rows
+        for (List<String> row : tableRows) {
+            if (row == null || row.size() < 5) {
+                continue;
+            }
+            String joined = String.join(" ", row).toLowerCase();
+            // Skip header row
+            if (joined.contains("txn date") || joined.contains("description")) {
+                continue;
+            }
+            // 🧹 Clean cells
             for (int i = 0; i < row.size(); i++) {
                 row.set(i, row.get(i).replaceAll("[\\r\\n]", "").trim());
             }
-
             TransactionDTO tx = new TransactionDTO();
-
-            // 🗓 Transaction and Value Dates
-            tx.setTransactionDate(row.get(1));
-
-            // 🧾 Cheque Number & Description
+            // 🗓 Transaction Date
+            tx.setTransactionDate(row.size() > 1 ? row.get(1) : "-");
+            // 🧾 Description
             tx.setDescription(row.size() > 3 && !row.get(3).isEmpty() ? row.get(3) : "-");
 
-            // 💰 Debit / Credit / Balance
-            tx.setDebit(row.size() > 5 && !row.get(5).isEmpty() ? cleanAmount(row.get(5)) : "-");
-            tx.setCredit(row.size() > 6 && !row.get(6).isEmpty() ? cleanAmount(row.get(6)) : "-");
-            tx.setBalance(row.size() > 7 && !row.get(7).isEmpty() ? cleanAmount(row.get(7)) : "-");
+            if (row.size() > 5) {
+                String col5 = row.get(5).toLowerCase().trim();
 
-            // 🧾 Voucher Type Logic
-            if (tx.getCredit() != null && !tx.getCredit().equals("-") && !tx.getCredit().isEmpty()) {
+                if (col5.contains("dr") || col5.contains("cr")) {
+                    if (col5.contains("dr")) {
+                        tx.setDebit(row.size() > 7 && !row.get(7).isEmpty() ? cleanAmount(row.get(7)) : "-");
+                        tx.setCredit("-");
+                        tx.setBalance(row.size() > 8 && !row.get(8).isEmpty() ? cleanAmount(row.get(8)) : "-");
+                    } else {
+                        tx.setCredit(row.size() > 7 && !row.get(7).isEmpty() ? cleanAmount(row.get(7)) : "-");
+                        tx.setDebit("-");
+                        tx.setBalance(row.size() > 8 && !row.get(8).isEmpty() ? cleanAmount(row.get(8)) : "-");
+                    }
+                } else {
+                    tx.setDebit(row.size() > 5 && !row.get(5).isEmpty() ? cleanAmount(row.get(5)) : "-");
+                    tx.setCredit(row.size() > 6 && !row.get(6).isEmpty() ? cleanAmount(row.get(6)) : "-");
+                    tx.setBalance(row.size() > 7 && !row.get(7).isEmpty() ? cleanAmount(row.get(7)) : "-");
+                }
+            }
+
+            // 🧾 Voucher Type
+            if (!tx.getCredit().equals("-") && !tx.getCredit().isEmpty()) {
                 tx.setVoucherType("Receipt");
-            } else if (tx.getDebit() != null && !tx.getDebit().equals("-") && !tx.getDebit().isEmpty()) {
+            } else if (!tx.getDebit().equals("-") && !tx.getDebit().isEmpty()) {
                 tx.setVoucherType("Payment");
             } else {
                 tx.setVoucherType("-");
@@ -157,6 +227,7 @@ public class TabulaExtractorService {
 
         return transactions;
     }
+
 
 
 
@@ -348,7 +419,7 @@ public class TabulaExtractorService {
         // Common header keywords to skip
         String[] headerKeywords = {
                 "date", "transaction date", "value date", "description", "particulars",
-                "cheque", "ref no", "debit", "credit", "balance", "amount"
+                "cheque", "ref no", "debit", "balance", "amount"
         };
 
         for (String cell : row) {
