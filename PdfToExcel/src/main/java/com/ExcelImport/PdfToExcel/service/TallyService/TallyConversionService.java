@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -102,32 +103,39 @@ public class TallyConversionService {
     }
 
     private String simpleTallyDate(String dateStr) {
+
         if (dateStr == null || dateStr.trim().isEmpty()) {
             return "";
         }
 
-        // Normalize new line and multiple spaces
         dateStr = dateStr.replace("\n", " ").replaceAll("\\s+", " ").trim();
 
         SimpleDateFormat tallyFormat = new SimpleDateFormat("yyyyMMdd");
 
-        SimpleDateFormat[] inputFormats = {
-                new SimpleDateFormat("dd-MM-yyyy HH:mm:ss"),
-                new SimpleDateFormat("dd/MM/yyyy"),
-                new SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH),
-                new SimpleDateFormat("dd-MM-yyyy")
+        String[] patterns = {
+                "yyyy-MM-dd HH:mm:ss.SSS",
+                "yyyy-MM-dd HH:mm:ss",
+                "yyyy-MM-dd",
+                "dd-MM-yyyy HH:mm:ss",
+                "dd/MM/yyyy",
+                "dd-MM-yyyy",
+                "dd MMM yyyy",
+                "dd-MMM-yy"
         };
 
-        for (SimpleDateFormat inputFormat : inputFormats) {
+        for (String pattern : patterns) {
             try {
-                return tallyFormat.format(inputFormat.parse(dateStr));
-            } catch (ParseException ignored) {
-            }
+                SimpleDateFormat inputFormat = new SimpleDateFormat(pattern);
+                inputFormat.setLenient(false);   // ⭐ prevents wrong parsing
+
+                Date date = inputFormat.parse(dateStr);
+                return tallyFormat.format(date);
+
+            } catch (ParseException ignored) {}
         }
 
         return "";
     }
-
 
 
 
