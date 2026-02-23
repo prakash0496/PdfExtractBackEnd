@@ -91,44 +91,43 @@ public class TabulaExtractorService {
             // 🗓 Transaction and Value Dates
             tx.setTransactionDate(row.get(0));
 
-           // 🧾 Cheque Number & Description
-            String description = "-";
 
-            for (int i = 3; i <= 5 && i < row.size(); i++) {
+            if (row.size() > 3) {
 
-                String value = row.get(i);
+                String desc = "-";
 
-                if (value != null) {
-                    value = value.trim();
+                for (int i = 3; i <= 4 && i < row.size(); i++) {
 
-                    String lower = value.toLowerCase();
+                    if (row.get(i) == null) continue;
 
-                    // Skip unwanted values
-                    if (!value.isEmpty()
-                            && !lower.equals("b/f")
-                            && !lower.contains("txn")
-                            && !lower.contains("chq")
-                            && !lower.contains("cheque")
-                            && !lower.contains("ref")
-                            && !value.matches("\\d+")) {   // skip pure numbers (cheque no)
+                    String value = row.get(i).trim();
 
-                        description = value;
-                        break;
-                    }
+                    if (value.isEmpty()) continue;
+
+                    // Ignore header
+                    if (value.equalsIgnoreCase("description")) continue;
+
+                    // Ignore pure numbers (amount columns)
+                    if (value.matches("-?\\d+(,\\d+)*(\\.\\d+)?")) continue;
+
+                    // First valid text → treat as description
+                    desc = value;
+                    break;
                 }
-            }
 
-            tx.setDescription(description);
+                tx.setDescription(desc);
+            }
+            //      tx.setDescription(description);
 
             // 💰 Debit / Credit / Balance
-            tx.setDebit(row.size() > 5 && !row.get(5).isEmpty() ? cleanAmount(row.get(5)) : "-");
-            tx.setCredit(row.size() > 6 && !row.get(6).isEmpty() ? cleanAmount(row.get(6)) : "-");
-            tx.setBalance(row.size() > 7 && !row.get(7).isEmpty() ? cleanAmount(row.get(7)) : "-");
+            tx.setDebit(row.size() > 5 && !row.get(5).isEmpty() ? cleanAmount(row.get(5)) : "0.0");
+            tx.setCredit(row.size() > 6 && !row.get(6).isEmpty() ? cleanAmount(row.get(6)) : "0.0");
+            tx.setBalance(row.size() > 7 && !row.get(7).isEmpty() ? cleanAmount(row.get(7)) : "0.0");
 
             // 🧾 Voucher Type Logic
-            if (tx.getCredit() != null && !tx.getCredit().equals("-") && !tx.getCredit().isEmpty()) {
+            if (tx.getCredit() != null && !tx.getCredit().equals("0.0") && !tx.getCredit().isEmpty()) {
                 tx.setVoucherType("Receipt");
-            } else if (tx.getDebit() != null && !tx.getDebit().equals("-") && !tx.getDebit().isEmpty()) {
+            } else if (tx.getDebit() != null && !tx.getDebit().equals("0.0") && !tx.getDebit().isEmpty()) {
                 tx.setVoucherType("Payment");
             } else {
                 tx.setVoucherType("-");
@@ -733,6 +732,64 @@ public class TabulaExtractorService {
 
         return transactions;
     }
+/*
+    //Equitas Bank
+
+    public List<TransactionDTO> equitasBankMapDto(List<List<String>> tableRows){
+        List<TransactionDTO> transactionDTOS = new ArrayList<>();
+
+        boolean isFirstRow = true;
+
+        for (List<String> row : tableRows){
+
+            // Skip the first row (headings)
+            if (isFirstRow) {
+                isFirstRow = false;
+                continue;
+            }
+
+            // Skip if row is empty
+            if (isRowEmpty(row)) {
+                continue;
+            }
+
+            // Clean up each cell in the row
+            for (int i = 0; i < row.size(); i++) {
+                row.set(i, row.get(i).replaceAll("[\\r\\n]", "").trim());
+            }
+
+            // Skip if after cleaning, the row is empty or contains header keywords
+            if (isRowEmpty(row) || containsHeaderKeywords(row)) {
+                continue;
+            }
+
+            // 🚫 Skip "TOTAL" rows
+            if (isTotalRow(row)) {
+                continue;
+            }
+
+            TransactionDTO tx = new TransactionDTO();
+
+            tx.setTransactionDate(row.get(0));
+            tx.setDescription(row.size() > 2 && !row.get(2).isEmpty() ? row.get(2) : "-");
+            tx.setDebit(row.size() > 3 && !row.get(3).isEmpty() ? cleanAmount(row.get(3)) : "-");
+            tx.setCredit(row.size() > 4 && !row.get(4).isEmpty() ? cleanAmount(row.get(4)) : "-");
+            tx.setBalance(row.size() > 5 && !row.get(5).isEmpty() ? cleanAmount(row.get(5)) : "-");
+
+            // 🧾 Voucher Type Logic
+            if (tx.getCredit() != null && !tx.getCredit().equals("-") && !tx.getCredit().isEmpty()) {
+                tx.setVoucherType("Receipt");
+            } else if (tx.getDebit() != null && !tx.getDebit().equals("-") && !tx.getDebit().isEmpty()) {
+                tx.setVoucherType("Payment");
+            } else {
+                tx.setVoucherType("-");
+            }
+            transactionDTOS.add(tx);
+        }
+        return transactionDTOS;
+    }
+*/
+
 }
 
 

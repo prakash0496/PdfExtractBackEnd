@@ -34,6 +34,7 @@ public class TallyConversionService {
         SimpleDateFormat tallyDate = new SimpleDateFormat("yyyyMMdd");
 
         for (Map<String, Object> tx : transactions) {
+
             String date = (String) tx.get("transactionDate");
             String narration = (String) tx.get("description");
             String debit = (String) tx.get("debit");
@@ -41,43 +42,62 @@ public class TallyConversionService {
             String voucherName = (String) tx.get("voucherType");
             String ledgerName = (String) tx.get("ledgerName");
 
+            // ------------------- CLEAN VALUES -------------------
+            debit = debit != null ? debit.replace(",", "").trim() : "";
+            credit = credit != null ? credit.replace(",", "").trim() : "";
 
-            boolean isCredit = credit != null && !credit.equals("-") && !credit.isEmpty();
-            String amount = isCredit ? credit : debit;
-            if (amount == null || amount.equals("-") || amount.isEmpty()) continue;
-            // ✅ SET DEFAULT LEDGER
+            double debitValue = 0.0;
+            double creditValue = 0.0;
+
+            try {
+                if (!debit.isEmpty() && !debit.equals("-"))
+                    debitValue = Double.parseDouble(debit);
+
+                if (!credit.isEmpty() && !credit.equals("-"))
+                    creditValue = Double.parseDouble(credit);
+
+            } catch (Exception e) {
+                continue; // skip invalid rows
+            }
+
+            // ------------------- FIX ZERO ISSUE -------------------
+            boolean isCredit = creditValue > 0;
+            double amountValue = isCredit ? creditValue : debitValue;
+
+            if (amountValue == 0.0) continue; // Skip zero transactions
+
+            String amount = String.format("%.2f", amountValue);
+
+            // ------------------- DEFAULT LEDGER -------------------
             if (ledgerName == null || ledgerName.trim().isEmpty() || ledgerName.equals("-")) {
                 ledgerName = "Suspense";
             }
 
-            amount = amount.replaceAll(",", "").trim();
-            String formattedDate;
-
-            formattedDate = simpleTallyDate(date);
-
+            // ------------------- DATE -------------------
+            String formattedDate = simpleTallyDate(date);
 
             String voucherNumber = String.valueOf(counter);
             String guid = "GUID-" + voucherNumber;
 
-                xml.append("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\">\n")
+            xml.append("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\">\n")
                     .append("<VOUCHER VCHTYPE=\"").append(voucherName)
                     .append("\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\">\n")
                     .append("<GUID>").append(guid).append("</GUID>\n")
                     .append("<DATE>").append(formattedDate).append("</DATE>\n")
                     .append("<VOUCHERNUMBER>").append(voucherNumber).append("</VOUCHERNUMBER>\n")
-                    .append("<NARRATION>").append(escapeXml(narration)).append("</NARRATION>\n")
+                    .append("<NARRATION>").append(escapeXml(narration != null ? narration : "")).append("</NARRATION>\n")
                     .append("<VOUCHERTYPENAME>").append(escapeXml(voucherName)).append("</VOUCHERTYPENAME>\n")
                     .append("<PARTYLEDGERNAME>").append(bankName).append("</PARTYLEDGERNAME>\n")
                     .append("<PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>\n")
 
-                    // Suspense Ledger
+                    // Ledger Entry (Suspense or Party)
                     .append("<ALLLEDGERENTRIES.LIST>\n")
                     .append("<LEDGERNAME>").append(ledgerName).append("</LEDGERNAME>\n")
                     .append("<ISDEEMEDPOSITIVE>").append(isCredit ? "No" : "Yes").append("</ISDEEMEDPOSITIVE>\n")
                     .append("<AMOUNT>").append(isCredit ? amount : "-" + amount).append("</AMOUNT>\n")
                     .append("</ALLLEDGERENTRIES.LIST>\n")
 
-                    // Bank Ledger
+                    // Bank Entry
                     .append("<ALLLEDGERENTRIES.LIST>\n")
                     .append("<LEDGERNAME>").append(typeBank.toUpperCase()).append("</LEDGERNAME>\n")
                     .append("<ISDEEMEDPOSITIVE>").append(isCredit ? "Yes" : "No").append("</ISDEEMEDPOSITIVE>\n")
@@ -88,7 +108,6 @@ public class TallyConversionService {
 
             counter++;
         }
-
         xml.append("</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>");
         return xml.toString().getBytes(StandardCharsets.UTF_8);
     }
