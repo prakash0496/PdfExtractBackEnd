@@ -26,49 +26,64 @@ import java.util.stream.Stream;
 public class TabulaExtractorService {
 
 
-    public List<List<String>> extractTableFromPdf(byte[] pdfBytes,String password) throws Exception {
+    public List<List<String>> extractTableFromPdf(byte[] pdfBytes, String password) throws Exception {
+
         List<List<String>> tableData = new ArrayList<>();
 
-        try (PDDocument pdfDocument = PDDocument.load(new ByteArrayInputStream(pdfBytes),password)) {
-            ObjectExtractor extractor = new ObjectExtractor(pdfDocument);
+        try (PDDocument document = PDDocument.load(
+                new ByteArrayInputStream(pdfBytes), password)) {
+
+            ObjectExtractor extractor = new ObjectExtractor(document);
             SpreadsheetExtractionAlgorithm spreadsheet = new SpreadsheetExtractionAlgorithm();
-            //BasicExtractionAlgorithm basic = new BasicExtractionAlgorithm();
 
-            for (int i = 1; i <= pdfDocument.getNumberOfPages(); i++) {
-                Page page = extractor.extract(i);
+            int totalPages = document.getNumberOfPages();
 
-                // 🔹 Try spreadsheet extraction first (best for SBI, Canara, City Union)
+            for (int pageIndex = 1; pageIndex <= totalPages; pageIndex++) {
+
+                Page page = extractor.extract(pageIndex);
                 List<Table> tables = spreadsheet.extract(page);
 
-//                // 🔸 Fallback: if spreadsheet fails or detects too few columns, use Basic
-//                if (tables.isEmpty() ||
-//                        tables.get(0).getRows().isEmpty() ||
-//                        tables.get(0).getRows().get(0).size() < 4) {
-//
-//                    tables = basic.extract(page);
-//                }
+                if (tables == null || tables.isEmpty()) continue;
 
                 for (Table table : tables) {
+
                     for (List<RectangularTextContainer> row : table.getRows()) {
-                        List<String> rowData = new ArrayList<>();
-                        boolean isEmptyRow = true;
+
+                        List<String> rowData = new ArrayList<>(row.size());
+                        boolean validRow = false;
 
                         for (RectangularTextContainer cell : row) {
-                            String cellText = cell.getText().trim().replaceAll("\\s+", " ");
-                            if (!cellText.isEmpty()) isEmptyRow = false;
-                            rowData.add(cellText);
+
+                            String text = cell.getText();
+
+                            if (text != null) {
+                                text = text.trim().replaceAll("\\s+", " ");
+                                if (!text.isEmpty()) validRow = true;
+                                rowData.add(text);
+                            } else {
+                                rowData.add("");
+                            }
                         }
 
-                        // ✅ Only add non-empty rows
-                        if (!isEmptyRow && !rowData.isEmpty()) {
-                            tableData.add(rowData);
-                        }
+                        // Skip empty rows
+                        if (!validRow) continue;
+
+                        // Skip header duplicates (common in bank statements)
+                        if (isHeaderRow(rowData)) continue;
+
+                        tableData.add(rowData);
                     }
                 }
             }
         }
 
         return tableData;
+    }
+
+    private boolean isHeaderRow(List<String> row) {
+        String combined = String.join(" ", row).toLowerCase();
+        return combined.contains("date") &&
+                combined.contains("balance");
     }
 
     //Canara Bank Extraction
@@ -79,7 +94,8 @@ public class TabulaExtractorService {
         for (List<String> row : tableRows) {
 
             // Skip header or invalid rows
-            if (row.size() < 8 || row.get(0).toLowerCase().contains("txn") || row.get(0).toLowerCase().contains("date") || row.get(0).toLowerCase().contains("opening") || row.get(2).toLowerCase().contains("b/f") || row.get(3).toLowerCase().contains("b/f") || row.get(4).toLowerCase().contains("b/f") || row.get(7).toLowerCase().contains("0.0")) continue;
+            if (row.size() < 8 || row.get(0).toLowerCase().contains("txn") || row.get(0).toLowerCase().contains("date") || row.get(0).toLowerCase().contains("opening") || row.get(2).toLowerCase().contains("b/f") || row.get(3).toLowerCase().contains("b/f") || row.get(4).toLowerCase().contains("b/f") || row.get(7).toLowerCase().contains("0.0"))
+                continue;
 
             // Clean cells
             for (int i = 0; i < row.size(); i++) {
@@ -228,8 +244,6 @@ public class TabulaExtractorService {
     }
 
 
-
-
     // StateBank Extraction
 
     public List<TransactionDTO> statebankMapDto(List<List<String>> tableRows) {
@@ -291,6 +305,179 @@ public class TabulaExtractorService {
         return transactions;
     }
 
+    // Indian Bank
+
+    public List<TransactionDTO> indianbankMapDto(List<List<String>> tableRows) {
+        List<TransactionDTO> transactions = new ArrayList<>();
+
+        for (List<String> row : tableRows) {
+            if (row == null || row.isEmpty()) continue;
+
+            // 🧹 Clean each cell
+            for (int i = 0; i < row.size(); i++) {
+                String cell = row.get(i);
+                row.set(i, (cell == null ? "" : cell.replaceAll("[\\r\\n]", "").trim()));
+            }
+
+            // 🧾 Skip fully empty rows (all blank or "-")
+            boolean allEmpty = row.stream()
+                    .allMatch(cell -> cell == null || cell.trim().isEmpty() || cell.trim().equals("-"));
+            if (allEmpty) continue;
+
+            // 🧾 Skip header or invalid rows
+            if (row.get(0).toLowerCase().contains("txn") || row.get(0).toLowerCase().contains("date")) continue;
+
+            TransactionDTO dto = new TransactionDTO();
+
+            boolean hasBranchCode = row.size() >= 8;
+
+            dto.setTransactionDate(formatTallyDate(getValue(row, 0)));
+            dto.setDescription(getValue(row, 5));
+
+//            if (hasBranchCode) {
+                dto.setDebit(cleanAmount(getValue(row, 3)));
+                dto.setCredit(cleanAmount(getValue(row, 2)));
+                dto.setBalance(cleanAmount(getValue(row, 4)));
+//            } else {
+//                dto.setDebit(cleanAmount(getValue(row, 4)));
+//                dto.setCredit(cleanAmount(getValue(row, 5)));
+//                dto.setBalance(cleanAmount(getValue(row, 6)));
+//            }
+
+            // 💰 Voucher type logic
+            if (!dto.getCredit().equals("-")) dto.setVoucherType("Receipt");
+            else if (!dto.getDebit().equals("-")) dto.setVoucherType("Payment");
+            else dto.setVoucherType("-");
+
+            // 🚫 Skip DTOs that are all "-"
+            boolean allDash = Stream.of(
+                    dto.getTransactionDate(),
+                    dto.getDescription(),
+                    dto.getDebit(),
+                    dto.getCredit(),
+                    dto.getBalance()
+            ).allMatch(val -> val == null || val.trim().equals("-") || val.trim().isEmpty());
+
+            if (allDash) continue;
+
+            transactions.add(dto);
+        }
+
+        return transactions;
+    }
+
+
+    //Kotak
+
+    public List<TransactionDTO> kotakbankMapDto(List<List<String>> tableRows) {
+
+        List<TransactionDTO> transactions = new ArrayList<>();
+
+        for (List<String> row : tableRows) {
+
+            if (row == null || row.isEmpty()) continue;
+
+            // 🧹 Clean each cell
+            for (int i = 0; i < row.size(); i++) {
+                String cell = row.get(i);
+                row.set(i, (cell == null ? "" : cell.replaceAll("[\\r\\n]", "").trim()));
+            }
+
+            // 🧾 Skip fully empty rows
+            boolean allEmpty = row.stream()
+                    .allMatch(cell -> cell == null || cell.trim().isEmpty() || cell.trim().equals("-"));
+            if (allEmpty) continue;
+
+            // 🧾 Skip header rows
+            if (row.get(0).toLowerCase().contains("txn") ||
+                    row.get(0).toLowerCase().contains("date")) continue;
+
+            // 🔴 IMPORTANT: Skip row if balance is empty
+            String balanceValue = getValue(row, 6);
+            if (balanceValue == null || balanceValue.trim().isEmpty() || balanceValue.trim().equals("-")) {
+                continue;   // 🚫 Entire row skipped
+            }
+
+            TransactionDTO dto = new TransactionDTO();
+
+            dto.setTransactionDate(formatTallyDate(getValue(row, 1)));
+            dto.setDescription(getValue(row, 2));
+            dto.setDebit(cleanAmount(getValue(row, 4)));
+            dto.setCredit(cleanAmount(getValue(row, 5)));
+            dto.setBalance(cleanAmount(balanceValue));
+
+            // 💰 Voucher type logic
+            if (!dto.getCredit().equals("-")) {
+                dto.setVoucherType("Receipt");
+            } else if (!dto.getDebit().equals("-")) {
+                dto.setVoucherType("Payment");
+            } else {
+                dto.setVoucherType("-");
+            }
+
+            transactions.add(dto);
+        }
+
+        return transactions;
+    }
+
+    //AXIS BANK
+
+    public List<TransactionDTO> axisbankMapDto(List<List<String>> tableRows) {
+
+        List<TransactionDTO> transactions = new ArrayList<>();
+
+        for (List<String> row : tableRows) {
+
+            if (row == null || row.isEmpty()) continue;
+
+            // 🧹 Clean each cell
+            for (int i = 0; i < row.size(); i++) {
+                String cell = row.get(i);
+                row.set(i, (cell == null ? "" : cell.replaceAll("[\\r\\n]", "").trim()));
+            }
+
+            // 🧾 Skip fully empty rows
+            boolean allEmpty = row.stream()
+                    .allMatch(cell -> cell == null || cell.trim().isEmpty() || cell.trim().equals("-"));
+            if (allEmpty) continue;
+
+            // 🧾 Skip header rows
+            if (row.get(0).toLowerCase().contains("txn") ||
+                    row.get(0).toLowerCase().contains("date")) continue;
+
+            // 🔴 IMPORTANT: Skip row if balance is empty
+            String balanceValue = getValue(row, 5);
+            if (balanceValue == null || balanceValue.trim().isEmpty() || balanceValue.trim().equals("-")) {
+                continue;   // 🚫 Entire row skipped
+            }
+
+            TransactionDTO dto = new TransactionDTO();
+
+            dto.setTransactionDate(formatTallyDate(getValue(row, 0)));
+            dto.setDescription(getValue(row, 2));
+            dto.setDebit(cleanAmount(getValue(row, 3)));
+            dto.setCredit(cleanAmount(getValue(row, 4)));
+            dto.setBalance(cleanAmount(balanceValue));
+
+            // 💰 Voucher type logic
+            if (!dto.getCredit().equals("-")) {
+                dto.setVoucherType("Receipt");
+            } else if (!dto.getDebit().equals("-")) {
+                dto.setVoucherType("Payment");
+            } else {
+                dto.setVoucherType("-");
+            }
+
+            transactions.add(dto);
+        }
+
+        return transactions;
+    }
+
+
+
+
 // 🔹 Helper Methods
 
     private String getValue(List<String> row, int index) {
@@ -337,12 +524,12 @@ public class TabulaExtractorService {
 
     //City_Union Bank Extraction
 
-    public List<TransactionDTO> cityUnionBankMapDto(List<List<String>> tableRows){
+    public List<TransactionDTO> cityUnionBankMapDto(List<List<String>> tableRows) {
         List<TransactionDTO> transactionDTOS = new ArrayList<>();
 
         boolean isFirstRow = true;
 
-        for (List<String> row : tableRows){
+        for (List<String> row : tableRows) {
 
             // Skip the first row (headings)
             if (isFirstRow) {
@@ -452,10 +639,10 @@ public class TabulaExtractorService {
 
     //Federal Bank Extraction
 
-    public List<List<String>> extractTableFederal(byte[] pdfBytes,String password) throws Exception {
+    public List<List<String>> extractTableFederal(byte[] pdfBytes, String password) throws Exception {
         List<List<String>> tableData = new ArrayList<>();
 
-        try (PDDocument pdfDocument = PDDocument.load(new ByteArrayInputStream(pdfBytes),password)) {
+        try (PDDocument pdfDocument = PDDocument.load(new ByteArrayInputStream(pdfBytes), password)) {
             ObjectExtractor extractor = new ObjectExtractor(pdfDocument);
             SpreadsheetExtractionAlgorithm sea = new SpreadsheetExtractionAlgorithm();
 
@@ -540,7 +727,6 @@ public class TabulaExtractorService {
             tx.setDebit(row.size() > 6 ? cleanAmount(row.get(6)) : "-");
             tx.setCredit(row.size() > 7 ? cleanAmount(row.get(7)) : "-");
             tx.setBalance(row.size() > 8 ? cleanAmount(row.get(8)) : "-");
-
 
 
             // 🧾 Voucher Type Logic
@@ -732,65 +918,101 @@ public class TabulaExtractorService {
 
         return transactions;
     }
-/*
+
     //Equitas Bank
 
-    public List<TransactionDTO> equitasBankMapDto(List<List<String>> tableRows){
+    public List<TransactionDTO> equitasBankMapDto(List<List<String>> tableRows) {
+
         List<TransactionDTO> transactionDTOS = new ArrayList<>();
 
-        boolean isFirstRow = true;
+        if (tableRows == null || tableRows.isEmpty()) {
+            return transactionDTOS;
+        }
 
-        for (List<String> row : tableRows){
+        for (List<String> row : tableRows) {
 
-            // Skip the first row (headings)
-            if (isFirstRow) {
-                isFirstRow = false;
+            if (row == null || row.size() < 4) {
                 continue;
             }
 
-            // Skip if row is empty
+            // Clean each cell
+            for (int i = 0; i < row.size(); i++) {
+                if (row.get(i) != null) {
+                    row.set(i, row.get(i).replaceAll("[\\r\\n]", "").trim());
+                }
+            }
+
+            // Skip empty rows
             if (isRowEmpty(row)) {
                 continue;
             }
 
-            // Clean up each cell in the row
-            for (int i = 0; i < row.size(); i++) {
-                row.set(i, row.get(i).replaceAll("[\\r\\n]", "").trim());
-            }
+            String joined = String.join(" ", row).toLowerCase();
 
-            // Skip if after cleaning, the row is empty or contains header keywords
-            if (isRowEmpty(row) || containsHeaderKeywords(row)) {
+            // 🚫 Skip header rows
+            if (joined.contains("txn date") ||
+                    joined.contains("transaction date") ||
+                    joined.contains("description") ||
+                    joined.contains("debit") ||
+                    joined.contains("credit") ||
+                    joined.contains("balance")) {
                 continue;
             }
 
-            // 🚫 Skip "TOTAL" rows
-            if (isTotalRow(row)) {
+            // 🚫 Skip customer/account detail rows
+            if (joined.contains("account number") ||
+                    joined.contains("customer name") ||
+                    joined.contains("branch") ||
+                    joined.contains("ifsc") ||
+                    joined.contains("statement period") ||
+                    joined.contains("opening balance")) {
+                continue;
+            }
+
+            // 🚫 Skip TOTAL rows
+            if (joined.contains("total")) {
+                continue;
+            }
+
+            // ✅ Ensure row looks like transaction (must contain date)
+            if (!isDateLike(row.get(0))) {
                 continue;
             }
 
             TransactionDTO tx = new TransactionDTO();
 
             tx.setTransactionDate(row.get(0));
-            tx.setDescription(row.size() > 2 && !row.get(2).isEmpty() ? row.get(2) : "-");
-            tx.setDebit(row.size() > 3 && !row.get(3).isEmpty() ? cleanAmount(row.get(3)) : "-");
-            tx.setCredit(row.size() > 4 && !row.get(4).isEmpty() ? cleanAmount(row.get(4)) : "-");
-            tx.setBalance(row.size() > 5 && !row.get(5).isEmpty() ? cleanAmount(row.get(5)) : "-");
+            tx.setDescription(row.size() > 2 ? row.get(2) : "-");
+            tx.setDebit(row.size() > 3 ? cleanAmount(row.get(3)) : "-");
+            tx.setCredit(row.size() > 4 ? cleanAmount(row.get(4)) : "-");
+            tx.setBalance(row.size() > 5 ? cleanAmount(row.get(5)) : "-");
 
             // 🧾 Voucher Type Logic
-            if (tx.getCredit() != null && !tx.getCredit().equals("-") && !tx.getCredit().isEmpty()) {
+            if (!"-".equals(tx.getCredit()) && !tx.getCredit().isEmpty()) {
                 tx.setVoucherType("Receipt");
-            } else if (tx.getDebit() != null && !tx.getDebit().equals("-") && !tx.getDebit().isEmpty()) {
+            } else if (!"-".equals(tx.getDebit()) && !tx.getDebit().isEmpty()) {
                 tx.setVoucherType("Payment");
             } else {
-                tx.setVoucherType("-");
+                continue; // Skip if both debit & credit empty
             }
+
             transactionDTOS.add(tx);
         }
+
         return transactionDTOS;
     }
-*/
 
+    private boolean isDateLike(String value) {
+        if (value == null) return false;
+
+        return value.matches("\\d{1,2}[-/ ]\\d{1,2}[-/ ]\\d{2,4}") ||
+                value.matches("\\d{1,2}-[A-Za-z]{3}-\\d{2,4}") ||
+                value.matches("\\d{4}-\\d{1,2}-\\d{1,2}");
+    }
 }
+
+
+
 
 
 

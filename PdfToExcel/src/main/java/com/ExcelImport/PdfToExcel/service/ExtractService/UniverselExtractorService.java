@@ -61,7 +61,7 @@ public class UniverselExtractorService {
         // ===========================================================
         assert pdfBytes != null;
         boolean isDigital = isDigitalPdf(pdfBytes.getBytes(),password);
-        boolean isTable   = hasTransactionTableLayout(pdfBytes.getBytes(),password);
+        boolean isTable   = hasTableStructure(pdfBytes.getBytes(),password);
 
         log.info("📄 PDF Type Detected → {}", isDigital ? "Digital Text-Based" : "Possibly Scanned (Image-based)");
         log.info("📊 Table Structure Detected → {}", isTable ? "Table-Based" : "No Table Structure");
@@ -99,9 +99,18 @@ public class UniverselExtractorService {
                 case "IDBI":
                     transactions= tabulaExtractorService.IdbiBankMapDto(rawTable);
                     break;
-               /* case "KVB":
-                    transactions = tabulaExtractorService.KvbBankMapDto(rawTable);
-                    break; */
+                case "INDIAN_BANK":
+                    transactions=tabulaExtractorService.indianbankMapDto(rawTable);
+                    break;
+                case "EQUITAS":
+                    transactions = tabulaExtractorService.equitasBankMapDto(rawTable);
+                    break;
+                case "KOTAK":
+                    transactions = tabulaExtractorService.kotakbankMapDto(rawTable);
+                    break;
+                case "AXIS":
+                    transactions = tabulaExtractorService.axisbankMapDto(rawTable);
+                    break;
                 default:
                     throw new IllegalArgumentException("❌ Unsupported bank: " + bank);
             }
@@ -162,12 +171,9 @@ public class UniverselExtractorService {
             case "INDUSLND":
                   transactions = ocrExtractService.extractTransactions(pdfBytes.getBytes());
                   break;
-//            case "CANARA":
-////                String textData = extractTextFromPdf(pdfBytes.getBytes(),password);
-//                transactions = textBasedExtractorService.extractCanaraBankTransaction(ocrData);
-//                break;
-
-
+            case "TMB":
+                transactions = ocrExtractService.ocrBasedTransactions(ocrData);
+                break;
             default:
                 transactions = ocrExtractService.ocrBasedTransactions(ocrData);
         }
@@ -246,96 +252,169 @@ public class UniverselExtractorService {
     /**
      * Detect if the PDF is digital (text-based) or scanned (image-only)
      */
-    private boolean isDigitalPdf(byte[] pdfBytes,String password) {
+    private boolean isDigitalPdf(byte[] pdfBytes, String password) {
+
         if (pdfBytes == null || pdfBytes.length == 0) return false;
 
-        try (PDDocument document = PDDocument.load(new ByteArrayInputStream(pdfBytes),password)) {
+        try (PDDocument document = PDDocument.load(new ByteArrayInputStream(pdfBytes), password)) {
+
+            if (document.isEncrypted()) {
+                log.warn("PDF is encrypted.");
+            }
+
             PDFTextStripper stripper = new PDFTextStripper();
             stripper.setSortByPosition(true);
+
             String text = stripper.getText(document);
 
-            // ✅ If extracted text length > threshold, it's a digital PDF
             if (text != null && text.trim().length() > 50) {
-                log.info("🔍 Detected text content length: {}", text.trim().length());
-                return true; // text-based (digital)
+                log.info("✅ Digital PDF detected. Text length: {}", text.trim().length());
+                return true;
             } else {
-                log.warn("🖼️ Very low text content detected — likely a scanned PDF.");
-                return false; // scanned or image-based
+                log.warn("🖼️ Likely scanned PDF (very little text detected)");
+                return false;
             }
+
         } catch (Exception e) {
-            log.error("⚠️ Error checking PDF type: {}", e.getMessage());
+            log.error("Error detecting PDF type", e);
             return false;
         }
     }
 
+    private boolean hasTableStructure(byte[] pdfBytes, String password) {
+
+        try (PDDocument document = PDDocument.load(new ByteArrayInputStream(pdfBytes), password)) {
+
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setSortByPosition(true);
+
+            String text = stripper.getText(document);
+
+            if (text == null || text.trim().isEmpty()) {
+                return false;
+            }
+
+            String[] lines = text.split("\\r?\\n");
+
+            int tableLikeLines = 0;
+            int expectedColumnCount = -1;
+
+            for (String line : lines) {
+
+                if (line.trim().isEmpty()) continue;
+
+                // Split by multiple spaces (common table separator)
+                String[] columns = line.trim().split("\\s{2,}");
+
+                if (columns.length >= 2) {
+
+                    if (expectedColumnCount == -1) {
+                        expectedColumnCount = columns.length;
+                    }
+
+                    if (columns.length == expectedColumnCount) {
+                        tableLikeLines++;
+                    }
+                }
+            }
+
+            // If many consistent column rows exist → likely table
+            if (tableLikeLines >= 5) {
+                log.info("📊 Table structure detected. Rows: {}", tableLikeLines);
+                return true;
+            }
+
+            return false;
+
+        } catch (Exception e) {
+            log.error("Error detecting table structure", e);
+            return false;
+        }
+    }
+
+
+
+
+
     // ===========================================================
 // 🔹 Check if PDF has Table Layout specifically for Transaction Section
 // ===========================================================
-private boolean hasTransactionTableLayout(byte[] pdfBytes,String password) {
-    try (PDDocument pdfDocument = PDDocument.load(new ByteArrayInputStream(pdfBytes),password)) {
+    private boolean hasTransactionTableLayout(byte[] pdfBytes, String password) {
 
-        ObjectExtractor extractor = new ObjectExtractor(pdfDocument);
-        SpreadsheetExtractionAlgorithm spreadsheetExtractor = new SpreadsheetExtractionAlgorithm();
+        try (PDDocument pdfDocument = PDDocument.load(new ByteArrayInputStream(pdfBytes), password)) {
 
-        int pagesToCheck = Math.min(pdfDocument.getNumberOfPages(), 3);
-        PDFTextStripper textStripper = new PDFTextStripper();
+            ObjectExtractor extractor = new ObjectExtractor(pdfDocument);
+            SpreadsheetExtractionAlgorithm spreadsheetExtractor = new SpreadsheetExtractionAlgorithm();
 
-        for (int i = 1; i <= pagesToCheck; i++) {
-            Page page = extractor.extract(i);
-            List<Table> tables = spreadsheetExtractor.extract(page);
+            int pagesToCheck = Math.min(pdfDocument.getNumberOfPages(), 3);
 
-            // =============================================================
-            // 🔹 1️⃣ Case 1: Headings + Rows are in table cells
-            // =============================================================
-            if (tables != null && !tables.isEmpty()) {
+            for (int i = 1; i <= pagesToCheck; i++) {
+
+                Page page = extractor.extract(i);
+                List<Table> tables = spreadsheetExtractor.extract(page);
+
+                if (tables == null || tables.isEmpty()) continue;
+
                 for (Table table : tables) {
+
                     List<List<RectangularTextContainer>> rows = table.getRows();
-                    if (rows.size() < 2) continue;
 
-                    // First row (possible header)
-                    List<String> header = rows.get(0).stream()
-                            .map(c -> c.getText().trim().toLowerCase())
-                            .collect(Collectors.toList());
+                    if (rows.size() < 3) continue; // too small to be transaction table
 
-                    // Data row
-                    List<String> firstDataRow = rows.get(1).stream()
-                            .map(c -> c.getText().trim().toLowerCase())
-                            .collect(Collectors.toList());
+                    int consistentColumnCount = 0;
+                    int previousColSize = -1;
+                    int transactionLikeRows = 0;
 
-                    boolean headerLike = header.stream().anyMatch(h ->
-                            h.contains("date") || h.contains("txn") || h.contains("description") || h.contains("debit")
-                    );
+                    for (List<RectangularTextContainer> row : rows) {
 
-                    boolean rowLike = firstDataRow.stream().anyMatch(v ->
-                            v.matches("\\d{1,2}[-/ ]\\d{1,2}[-/ ]\\d{2,4}") // looks like date
-                    );
+                        List<String> cells = row.stream()
+                                .map(c -> c.getText().trim())
+                                .collect(Collectors.toList());
 
-                    if (headerLike || rowLike) {
-                        System.out.println("📊 Table structure detected on page " + i + " (header or rows).");
+                        int currentSize = cells.size();
+
+                        // 🔹 1️⃣ Check consistent column count
+                        if (previousColSize == -1) {
+                            previousColSize = currentSize;
+                        } else if (previousColSize == currentSize) {
+                            consistentColumnCount++;
+                        }
+
+                        previousColSize = currentSize;
+
+                        // 🔹 2️⃣ Check if row looks like transaction
+                        boolean hasDate = cells.stream().anyMatch(this::isDateLike);
+                        boolean hasAmount = cells.stream().anyMatch(this::isAmountLike);
+
+                        if (hasDate && hasAmount) {
+                            transactionLikeRows++;
+                        }
+                    }
+
+                    // 🔥 Final Decision Logic
+                    if (consistentColumnCount >= 2 && transactionLikeRows >= 3) {
+                        System.out.println("📊 Strong transaction table detected on page " + i);
                         return true;
                     }
                 }
             }
 
-            // =============================================================
-            // 🔹 2️⃣ Case 2: Headings plain text, but table rows exist
-            // =============================================================
-            String text = extractTextFromPage(pdfDocument, textStripper, i);
-            if (text.matches("(?is).*txn\\s*date.*debit.*credit.*balance.*")) {
-                // Check if lines look aligned (columns aligned)
-                if (looksLikeTabularText(text)) {
-                    System.out.println("📄 Text-based table rows detected on page " + i);
-                    return true;
-                }
-            }
+        } catch (Exception e) {
+            System.err.println("❌ Table detection failed: " + e.getMessage());
         }
 
-        System.out.println("⚠️ No table-like structure detected.");
-    } catch (Exception e) {
-        System.err.println("❌ hasTransactionTableLayout failed: " + e.getMessage());
+        return false;
     }
-    return false;
-}
+
+    private boolean isDateLike(String value) {
+        return value.matches("\\d{1,2}[-/ ]\\d{1,2}[-/ ]\\d{2,4}") ||      // 12/01/2024
+                value.matches("\\d{1,2}-[A-Za-z]{3}-\\d{2,4}") ||          // 12-Jan-24
+                value.matches("\\d{4}-\\d{1,2}-\\d{1,2}");                 // 2024-01-12
+    }
+
+    private boolean isAmountLike(String value) {
+        return value.matches("[-+]?\\d{1,3}(,\\d{3})*(\\.\\d{1,2})?");    // 1,234.00
+    }
 
     private String extractTextFromPage(PDDocument doc, PDFTextStripper stripper, int page) throws IOException {
         stripper.setStartPage(page);

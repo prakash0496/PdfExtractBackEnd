@@ -44,10 +44,9 @@ public class OcrExtractService {
             return fullText.toString();
         }
     }
-
     // ===========================================================
-// 🔹 Universal Parser – Handles Text or OCR Extracted PDFs
-// ===========================================================
+    // 🔹 Universal Parser – Handles Text or OCR Extracted PDFs
+    // ===========================================================
     public List<TransactionDTO> ocrBasedTransactions(String text) {
         List<TransactionDTO> transactions = new ArrayList<>();
         if (text == null || text.trim().isEmpty()) {
@@ -214,27 +213,19 @@ public class OcrExtractService {
         dto.setCredit(credit);
         dto.setBalance(balance);
 
-        // 🧹 STEP: Clean up extra numeric columns at end of line (debit/credit/balance)
-// Removes up to last 3 numbers like 1,00,000.00 or -7,445.00 at the end
         String cleanedBlock = block.replaceAll(
                 "(\\s*-?\\d{1,3}(?:,\\d{2,3})*(?:\\.\\d{1,2})?){1,3}\\s*(Cr|Dr)?\\s*$",
-                ""
-        ).trim();
+                "").trim();
 
-// 🧹 Also remove any lingering multiple spaces
+        // 🧹 Also remove any lingering multiple spaces
         cleanedBlock = cleanedBlock.replaceAll("\\s+", " ").trim();
 
-// ✅ Log before & after cleaning (for debugging)
+        // ✅ Log before & after cleaning (for debugging)
         log.info("🧾 Before clean: {}", block);
         log.info("✅ After clean: {}", cleanedBlock);
 
-// 🧾 Set final description
+        // 🧾 Set final description
         dto.setDescription(cleanedBlock.isEmpty() ? "-" : cleanedBlock);
-
-
-
-
-
 
         // 8️⃣ Voucher type based on filled fields
         if (!credit.equals("-") && !credit.equals("0.00") && !credit.isEmpty())
@@ -247,7 +238,6 @@ public class OcrExtractService {
         return dto;
     }
 
-    // canara Bank Extraction
 
 
 

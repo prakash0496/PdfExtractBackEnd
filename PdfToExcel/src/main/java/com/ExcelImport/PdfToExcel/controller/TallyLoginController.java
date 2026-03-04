@@ -1,7 +1,10 @@
 package com.ExcelImport.PdfToExcel.controller;
 
 
+import com.ExcelImport.PdfToExcel.Entity.Login;
 import com.ExcelImport.PdfToExcel.dto.LoginDTO;
+import com.ExcelImport.PdfToExcel.dto.Response.LoginResponse;
+import com.ExcelImport.PdfToExcel.service.TallyService.LoginService;
 import com.ExcelImport.PdfToExcel.service.TallyService.TallyVerificationService;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,34 +14,34 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.view.RedirectView;
 
+import java.util.Optional;
+
 @CrossOrigin("*")
 @RestController
 @Log4j2
-@RequestMapping("api/tally")
+@RequestMapping("api/auth")
 public class TallyLoginController {
 
+    @Autowired
+    private LoginService loginService;
 
-//    @Autowired
-//    private TallyVerificationService tallyVerificationService;
-//
-//    @PostMapping(value = "/verify")
-//    public ResponseEntity<?> verifySerialAndAccount(@RequestBody LoginDTO loginDTO) {
-//
-//        try {
-//            boolean isValid = tallyVerificationService.verifySerialAndAccount(loginDTO.getUsername(), loginDTO.getPassword());
-//
-//            if (isValid) {
-//                // ✅ Redirect to main controller after success
-//                RedirectView redirectView = new RedirectView("/api/pdf/extracts");
-//                return ResponseEntity.ok(redirectView);
-//            } else {
-//                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-//                        .body("❌ Invalid Serial Number or Account ID");
-//            }
-//        } catch (Exception e) {
-//            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-//                    .body("❌ Error verifying with Tally: " + e.getMessage());
-//        }
-//    }
+    @PostMapping("/login")
+    public ResponseEntity<LoginResponse> login(@RequestBody Login request) {
+        Optional<Login> user = loginService.login(request);
 
+        if (user.isPresent()) {
+            return ResponseEntity.ok(
+                    new LoginResponse(true, "Login successful")
+            );
+        }
+
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(new LoginResponse(false, "Invalid username or password"));
+    }
+
+    @PostMapping("/register")
+    public Login registerUser(@RequestBody Login user) {
+        log.info("User Details Stored");
+        return loginService.userRegister(user);
+    }
 }
