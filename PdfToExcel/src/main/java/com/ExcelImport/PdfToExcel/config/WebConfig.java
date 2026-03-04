@@ -7,17 +7,25 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 @Configuration
 public class WebConfig {
+
     @Bean
     public WebMvcConfigurer corsConfigurer() {
+
         return new WebMvcConfigurer() {
+
             @Override
             public void addCorsMappings(CorsRegistry registry) {
+
                 registry.addMapping("/api/pdf")
-                        .allowedOrigins("https://pdfextractionfront.netlify.app/") //http://localhost:3000", "http://127.0.0.1:5500")
+                        .allowedOrigins("https://pdfextractionfront.netlify.app")
+                        .allowedHeaders("*")
+                        .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS");
+
+                registry.addMapping("/api/auth")
+                        .allowedOrigins("https://pdfextractionfront.netlify.app")
                         .allowedHeaders("*")
                         .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS");
             }
         };
     }
 }
-
