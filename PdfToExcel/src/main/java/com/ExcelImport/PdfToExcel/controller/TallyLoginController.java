@@ -16,10 +16,11 @@ import org.springframework.web.servlet.view.RedirectView;
 
 import java.util.Optional;
 
-@CrossOrigin("*")
+@CrossOrigin(origins = "https://pdfextractionfront.netlify.app",
+        allowCredentials = "true")
 @RestController
 @Log4j2
-@RequestMapping("api/auth")
+@RequestMapping("/api/auth")
 public class TallyLoginController {
 
     @Autowired
