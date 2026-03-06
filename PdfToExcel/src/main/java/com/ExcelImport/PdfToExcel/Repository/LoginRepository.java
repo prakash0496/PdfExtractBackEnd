@@ -11,4 +11,5 @@ public interface LoginRepository extends JpaRepository<Login,Integer> {
 
     Optional<Login> findByUsernameAndPassword(String username, String password);
 
+    boolean existsBySerialNumber(String serialNumber);
 }

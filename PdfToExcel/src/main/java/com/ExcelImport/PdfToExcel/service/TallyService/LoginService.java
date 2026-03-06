@@ -15,12 +15,15 @@ public class LoginService {
     @Autowired
     private LoginRepository loginRepository;
 
-    public  Optional<Login> login (Login request) {
+    public Optional<Login> login(String username, String password) {
 
-        return loginRepository.findByUsernameAndPassword(
-                request.getUsername().trim(),
-                request.getPassword().trim()
-        );
+        Optional<Login> logincheck = loginRepository.findByUsernameAndPassword(username, password);
+
+        return logincheck;
+    }
+    // 🔑 Check serial number in database
+    public boolean checkSerialNumber(String serialNumber) {
+        return loginRepository.existsBySerialNumber(serialNumber);
     }
 
     public Login userRegister(Login login){

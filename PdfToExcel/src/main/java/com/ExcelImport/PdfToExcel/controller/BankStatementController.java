@@ -20,6 +20,7 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -457,6 +458,23 @@ public class BankStatementController {
                     List<TransactionDTO>idbiTransactionDTOS = mapper.readValue(tableDataJson, new TypeReference<List<TransactionDTO>>() {});
                     tallyXml = tallyConversionService.generateTallyXml(tableDataJson,bank,typeBank);
                     headers.setContentDisposition(ContentDisposition.attachment().filename("TallyImport_IDBI.xml").build());
+                    break;
+
+                case "EQUITAS":
+                    List<TransactionDTO>equtasTransactionDTOS = mapper.readValue(tableDataJson, new TypeReference<List<TransactionDTO>>() {});
+                    tallyXml = tallyConversionService.generateTallyXml(tableDataJson,bank,typeBank);
+                    headers.setContentDisposition(ContentDisposition.attachment().filename("TallyImport_Equitas.xml").build());
+                    break;
+
+                case "AXIS":
+                    List<TransactionDTO>axisTransactionDTOS = mapper.readValue(tableDataJson, new TypeReference<List<TransactionDTO>>() {});
+                    tallyXml = tallyConversionService.generateTallyXml(tableDataJson,bank,typeBank);
+                    headers.setContentDisposition(ContentDisposition.attachment().filename("TallyImport_Axis.xml").build());
+                    break;
+                case "KOTAK":
+                    List<TransactionDTO>kotakTransactionDTOS = mapper.readValue(tableDataJson, new TypeReference<List<TransactionDTO>>() {});
+                    tallyXml = tallyConversionService.generateTallyXml(tableDataJson,bank,typeBank);
+                    headers.setContentDisposition(ContentDisposition.attachment().filename("TallyImport_Kotak.xml").build());
                     break;
 
                 default:

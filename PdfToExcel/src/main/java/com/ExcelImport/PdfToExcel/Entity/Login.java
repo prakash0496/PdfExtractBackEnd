@@ -14,7 +14,7 @@ import lombok.*;
 public class Login {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE)
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name="user_id")
     private Long Userid;
 
@@ -35,5 +35,8 @@ public class Login {
 
     @Column(name="pass_word")
     private String password;
+
+    @Column(name = "serial_number",unique = true)
+    private String serialNumber;
 
 }
