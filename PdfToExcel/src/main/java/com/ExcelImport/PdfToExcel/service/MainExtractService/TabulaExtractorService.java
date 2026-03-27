@@ -548,9 +548,9 @@ public class TabulaExtractorService {
             }
 
             // Skip if after cleaning, the row is empty or contains header keywords
-            if (isRowEmpty(row) || containsHeaderKeywords(row)) {
-                continue;
-            }
+//            if (isRowEmpty(row) || containsHeaderKeywords(row)) {
+//                continue;
+//            }
 
             // 🚫 Skip "TOTAL" rows
             if (isTotalRow(row)) {
@@ -605,7 +605,7 @@ public class TabulaExtractorService {
         // Common header keywords to skip
         String[] headerKeywords = {
                 "date", "transaction date", "value date", "description", "particulars",
-                "cheque", "ref no", "debit", "balance", "amount"
+                "cheque", "ref no", "balance", "amount"
         };
 
         for (String cell : row) {
@@ -929,9 +929,12 @@ public class TabulaExtractorService {
             return transactionDTOS;
         }
 
+        double previousBalance = 0.0;
+        boolean firstTransaction = true;
+
         for (List<String> row : tableRows) {
 
-            if (row == null || row.size() < 4) {
+            if (row == null || row.size() < 2) {
                 continue;
             }
 
@@ -942,14 +945,13 @@ public class TabulaExtractorService {
                 }
             }
 
-            // Skip empty rows
             if (isRowEmpty(row)) {
                 continue;
             }
 
             String joined = String.join(" ", row).toLowerCase();
 
-            // 🚫 Skip header rows
+            // Skip headers
             if (joined.contains("txn date") ||
                     joined.contains("transaction date") ||
                     joined.contains("description") ||
@@ -959,7 +961,7 @@ public class TabulaExtractorService {
                 continue;
             }
 
-            // 🚫 Skip customer/account detail rows
+            // Skip account details
             if (joined.contains("account number") ||
                     joined.contains("customer name") ||
                     joined.contains("branch") ||
@@ -969,39 +971,82 @@ public class TabulaExtractorService {
                 continue;
             }
 
-            // 🚫 Skip TOTAL rows
             if (joined.contains("total")) {
                 continue;
             }
 
-            // ✅ Ensure row looks like transaction (must contain date)
             if (!isDateLike(row.get(0))) {
                 continue;
             }
 
             TransactionDTO tx = new TransactionDTO();
-
             tx.setTransactionDate(row.get(0));
-            tx.setDescription(row.size() > 2 ? row.get(2) : "-");
-            tx.setDebit(row.size() > 3 ? cleanAmount(row.get(3)) : "-");
-            tx.setCredit(row.size() > 4 ? cleanAmount(row.get(4)) : "-");
-            tx.setBalance(row.size() > 5 ? cleanAmount(row.get(5)) : "-");
 
-            // 🧾 Voucher Type Logic
-            if (!"-".equals(tx.getCredit()) && !tx.getCredit().isEmpty()) {
-                tx.setVoucherType("Receipt");
-            } else if (!"-".equals(tx.getDebit()) && !tx.getDebit().isEmpty()) {
-                tx.setVoucherType("Payment");
-            } else {
-                continue; // Skip if both debit & credit empty
+            // Extract all amounts
+            List<Double> amounts = new ArrayList<>();
+
+            Matcher matcher = Pattern.compile("\\d+\\.\\d{2}").matcher(String.join(" ", row));
+
+            while (matcher.find()) {
+                amounts.add(Double.parseDouble(matcher.group()));
             }
+
+            if (amounts.isEmpty()) {
+                continue;
+            }
+
+            double balance = amounts.get(amounts.size() - 1);
+
+            tx.setBalance(String.format("%.2f", balance));
+
+            String debit = "-";
+            String credit = "-";
+
+            // ⭐ First transaction handling
+            if (firstTransaction) {
+
+                if (row.size() > 3) {
+                    String possibleDebit = cleanAmount(row.get(3));
+                    if (!possibleDebit.equals("-")) {
+                        debit = possibleDebit;
+                        tx.setVoucherType("Payment");
+                    }
+                }
+
+                if (row.size() > 4) {
+                    String possibleCredit = cleanAmount(row.get(4));
+                    if (!possibleCredit.equals("-")) {
+                        credit = possibleCredit;
+                        tx.setVoucherType("Receipt");
+                    }
+                }
+
+            } else {
+
+                double difference = balance - previousBalance;
+
+                if (difference > 0) {
+                    credit = String.format("%.2f", difference);
+                    tx.setVoucherType("Receipt");
+                } else if (difference < 0) {
+                    debit = String.format("%.2f", Math.abs(difference));
+                    tx.setVoucherType("Payment");
+                }
+            }
+
+            tx.setDebit(debit);
+            tx.setCredit(credit);
+
+            tx.setDescription(row.size() > 2 ? row.get(2) : "-");
+
+            previousBalance = balance;
+            firstTransaction = false;
 
             transactionDTOS.add(tx);
         }
 
         return transactionDTOS;
     }
-
     private boolean isDateLike(String value) {
         if (value == null) return false;
 

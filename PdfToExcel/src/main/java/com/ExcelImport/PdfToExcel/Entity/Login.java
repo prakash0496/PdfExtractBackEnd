@@ -4,19 +4,17 @@ package com.ExcelImport.PdfToExcel.Entity;
 import jakarta.persistence.*;
 import lombok.*;
 
-@Data
 @Entity
-@Getter
-@Setter
+@Table(name = "user_login")
+@Data
 @AllArgsConstructor
 @NoArgsConstructor
-@Table(name = "user_login")
 public class Login {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name="user_id")
-    private Long Userid;
+    private Long userId;
 
     @Column(name="first_name")
     private String firstname;
@@ -27,8 +25,11 @@ public class Login {
     @Column(name="company_name")
     private String company;
 
+    @Column(name="phone_number")
+    private String phonenumber;
+
     @Column(name="email_id")
-    private String email_ids;
+    private String emailIds;
 
     @Column(name="user_name")
     private String username;
@@ -36,7 +37,6 @@ public class Login {
     @Column(name="pass_word")
     private String password;
 
-    @Column(name = "serial_number",unique = true)
+    @Column(name = "serial_number", unique = true)
     private String serialNumber;
-
 }

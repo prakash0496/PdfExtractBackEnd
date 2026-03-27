@@ -7,6 +7,8 @@ import java.util.List;
 
 @Data
 @NoArgsConstructor
+@Setter
+@Getter
 public class LoginResponse {
 
     private boolean success;
@@ -15,13 +17,5 @@ public class LoginResponse {
     public LoginResponse(boolean success, String message) {
         this.success = success;
         this.message = message;
-    }
-
-    public boolean isSuccess() {
-        return success;
-    }
-
-    public String getMessage() {
-        return message;
     }
 }
